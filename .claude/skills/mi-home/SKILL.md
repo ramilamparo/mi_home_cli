@@ -60,6 +60,10 @@ mi -o plain get 台灯 brightness     # 单值，输出 "60"，适合直接用
 `mi get <设备> -o json` 返回的是 `{"属性全名": 值}`，比如
 `{"light.on": true, "light.brightness": 60}`。
 
+例外：`doctor`、`config list`、`home list`、`room list`、`lan *`、`device alias list`
+这些命令的 JSON 键是列名，会跟着界面语言变（中文下是 `检查项`，英文下是 `Check`）；
+要稳定的键就在命令前固定语言，比如 `MI_LANG=zh mi -o json doctor`。
+
 ### 退出码就是分类结果，照着分支处理
 
 | 码 | 含义 | 该怎么办 |

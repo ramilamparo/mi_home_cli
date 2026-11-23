@@ -333,8 +333,13 @@ Environment variables `MI_PROFILE` / `MI_REGION` / `MI_OUTPUT` / `MI_CHANNEL` /
 The interface language (Chinese / English) is picked in this order: the `MI_LANG`
 environment variable (`zh` / `en`) → `mi config set lang en` → the system locale
 (`LC_ALL` > `LC_MESSAGES` > `LANG`; `zh*` means Chinese, anything else English).
-Column names that are Chinese in `-o json/yaml` output follow the language (`检查项`
-becomes `Check` in English), so pin `MI_LANG` in scripts that need stable keys.
+Device spec text (property, action and event descriptions, enum value names such as
+`Day` / `Night`) follows the language too, taken from the translations miot-spec.org
+publishes and falling back to the spec's own English description; the spec cache holds
+every language, so switching needs no refetch. Enum values are written in the language
+you see: `--mode day` in English, `--mode 日光` in Chinese. Column names that are Chinese
+in `-o json/yaml` output follow the language as well (`检查项` becomes `Check` in
+English), so pin `MI_LANG` in scripts that need stable keys.
 
 ```bash
 mi -o plain get lamp brightness        # prints just "60", drop it straight into $(...)

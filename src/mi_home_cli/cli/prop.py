@@ -201,6 +201,7 @@ def get(
                 for p in wanted
             },
             fmt,
+            data_keys=True,
         )
         return
     if fmt is OutputFormat.plain and len(wanted) == 1:

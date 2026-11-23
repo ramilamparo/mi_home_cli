@@ -587,7 +587,7 @@ CATALOG: dict[str, str] = {
     "亮度，一般是 1~100": "Brightness, usually 1~100",
     "色温，单位开尔文，如 4000": "Color temperature in kelvin, e.g. 4000",
     "颜色，如 #ff8800 或 红": "Color, e.g. #ff8800 or red",
-    "模式，如 日光 / 月光": "Mode, by the name the device spec uses (see `mi spec show`)",
+    "模式，如 日光 / 月光": "Mode, e.g. Day / Night",
     "开机 / 关机": "Power on / off",
     "模式，如 制冷 / 制热 / 自动": "Mode, e.g. Cool / Heat / Auto",
     "目标温度": "Target temperature",

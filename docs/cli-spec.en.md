@@ -166,10 +166,11 @@ mi cover <device> [--open|--close|--stop|--position 50]
 mi fan <device> [--on|--off] [--speed 3] [--swing]
 ```
 
-`--mode` is matched against the value descriptions in the device's spec, so write it in
-whatever language that spec uses (the Chinese original of this document uses
-`--mode 睡眠` "sleep" and `--mode 制冷` "cool"). `--color` accepts hex as well as colour
-names in English or Chinese (`red` / `红`).
+`--mode` is matched against the enum value names of the device's spec, and those follow
+the interface language: with the English interface `mi spec show` lists names such as
+`Sleep` or `Cool`, so write `--mode sleep` / `--mode cool`; with the Chinese interface
+the same values are listed and written in Chinese. `--color` accepts hex as well as
+colour names in English or Chinese (`red` / `红`).
 
 ## 7. LAN `mi lan`
 

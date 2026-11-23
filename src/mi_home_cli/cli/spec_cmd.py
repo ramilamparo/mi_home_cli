@@ -197,7 +197,11 @@ def spec_dump(
             for e in spec.events
         ],
     }
-    render.output(data, pick_output(app_ctx, output, default=OutputFormat.json))
+    render.output(
+        data,
+        pick_output(app_ctx, output, default=OutputFormat.json),
+        data_keys=True,
+    )
 
 
 @cache_app.command("info")

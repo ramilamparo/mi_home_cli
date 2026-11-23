@@ -368,7 +368,7 @@ Value handling is entirely driven by the spec:
 
 - `bool`: `on/off/true/false/1/0/开/关` (the Chinese words `开` "on" and `关` "off" are accepted as input too)
 - `uint8/int32/float`: validated against `min/max/step` of `value-range`; out-of-range values are an error (never silently clamped)
-- Enum `value-list`: the description text (`Mode=Sleep` / `模式=睡眠`, i.e. whatever language the spec's descriptions are in) or the number may be written; on output the description is looked up
+- Enum `value-list`: the description text (`Mode=Sleep` with the English interface, `模式=睡眠` with the Chinese one — spec descriptions follow the interface language) or the number may be written; on output the description is looked up
 - `string`: as is
 - Writing a read-only property / reading an unreadable property → caught locally with an error before any request is sent
 

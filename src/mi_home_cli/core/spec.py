@@ -13,7 +13,7 @@ from typing import Any
 
 import httpx
 
-from ..i18n import t
+from ..i18n import get_lang, t
 from ..errors import AmbiguousReference, InvalidValue, NetworkError, SpecNotFound
 from ..store import Profile
 
@@ -23,6 +23,15 @@ MULTI_LANG_URL = "https://miot-spec.org/instance/v2/multiLanguage"
 # spec 基本不变，缓存久一点；和上游一样 14 天
 SPEC_TTL = 14 * 24 * 3600
 DEFAULT_LANG = "zh_cn"
+
+
+def spec_lang() -> str:
+    """spec 描述用哪种语言：跟着界面语言走。
+
+    缓存里存着 miot-spec 返回的全部语言，这里只是挑一种；`en` 里没有的条目会退回
+    instance 自带的英文描述。
+    """
+    return "en" if get_lang() == "en" else DEFAULT_LANG
 
 # spec 里的单位是英文全称，显示时换成常见符号
 _UNIT_SYMBOLS = {
@@ -471,13 +480,13 @@ class SpecStore:
         self,
         profile: Profile,
         *,
-        lang: str = DEFAULT_LANG,
+        lang: str | None = None,
         ttl: int = SPEC_TTL,
         client: httpx.Client | None = None,
         timeout: float = 30.0,
     ) -> None:
         self.profile = profile
-        self.lang = lang
+        self.lang = lang or spec_lang()
         self.ttl = ttl
         self._client = client or httpx.Client(timeout=timeout)
         self._owns_client = client is None

@@ -312,7 +312,10 @@ mi version
 
 界面语言（中文 / English）按这个顺序决定：环境变量 `MI_LANG`（`zh` / `en`）→
 `mi config set lang en` → 系统 locale（`LC_ALL` > `LC_MESSAGES` > `LANG`，`zh*` 为中文，
-其余为英文）。`-o json/yaml` 里原本是中文的列名会跟着语言走（英文下 `检查项` 变成
+其余为英文）。设备 spec 里的文字（属性、动作、事件的说明，`日光` / `月光` 这类枚举值名）
+也跟着语言走：取自 miot-spec.org 发布的翻译，没有就退回 spec 自带的英文描述；spec 缓存
+里存着全部语言，切换不用重新拉取。枚举值按你看到的语言写：中文下 `--mode 日光`，英文下
+`--mode day`。`-o json/yaml` 里原本是中文的列名同样跟着语言走（英文下 `检查项` 变成
 `Check`），脚本里想要稳定的键就固定 `MI_LANG`。
 
 ```bash

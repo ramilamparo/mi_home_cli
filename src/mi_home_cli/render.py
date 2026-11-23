@@ -63,10 +63,16 @@ def output(
     *,
     columns: Sequence[str] | None = None,
     title: str | None = None,
+    data_keys: bool = False,
 ) -> None:
-    """按格式输出。table 只对 list[dict] 和 dict 有意义。"""
-    # 命令里的行一律以中文列名为键，这里统一换成当前语言（中文环境下原样不动）
-    data = localize_keys(data)
+    """按格式输出。table 只对 list[dict] 和 dict 有意义。
+
+    data_keys=True 表示 dict 的键本身就是数据（属性名、spec 描述……）而不是列名，
+    原样输出，不做翻译。
+    """
+    # 命令里的行以中文列名为键，这里统一换成当前语言（中文环境下原样不动）
+    if not data_keys:
+        data = localize_keys(data)
     if columns is not None:
         columns = [t(col) for col in columns]
     if fmt is OutputFormat.json:

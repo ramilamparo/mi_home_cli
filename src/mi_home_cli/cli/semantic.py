@@ -71,11 +71,13 @@ def _show_status(
         data[prop.description or prop.name] = (
             format_color(value) if prop.name == "color" else format_value(prop, value)
         )
-    render.output(data, pick_output(app_ctx, output), title=t(
-        "{label}（{location}）",
-        label=device.label,
-        location=device.location,
-    ))
+    # 键是 spec 里的属性描述，属于数据，不当列名翻译
+    render.output(
+        data,
+        pick_output(app_ctx, output),
+        title=t("{label}（{location}）", label=device.label, location=device.location),
+        data_keys=True,
+    )
 
 
 def _apply(
