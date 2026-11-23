@@ -9,6 +9,7 @@ from typing import Annotated, Any, Optional
 
 import typer
 
+from ..i18n import t
 from .. import render
 from ..core.registry import Device
 from ..core.semantic import STATUS_PROPERTIES, Planner, format_color, parse_color
@@ -31,7 +32,7 @@ from .prop import (
     verify_after_write,
 )
 
-DeviceArg = Annotated[str, typer.Argument(help="设备名称、别名或 did")]
+DeviceArg = Annotated[str, typer.Argument(help=t("设备名称、别名或 did"))]
 
 
 def _ctx(ctx: typer.Context) -> AppContext:
@@ -51,7 +52,7 @@ def _show_status(
         if (prop := spec.by_name(name, readable=True)) is not None
     ]
     if not props:
-        render.warn(f"{device.label} 没有可读的状态属性")
+        render.warn(t("{label} 没有可读的状态属性", label=device.label))
         return
     with app_ctx.session() as session:
         results = _channel(app_ctx, session, device).get_props(
@@ -70,7 +71,11 @@ def _show_status(
         data[prop.description or prop.name] = (
             format_color(value) if prop.name == "color" else format_value(prop, value)
         )
-    render.output(data, pick_output(app_ctx, output), title=f"{device.label}（{device.location}）")
+    render.output(data, pick_output(app_ctx, output), title=t(
+        "{label}（{location}）",
+        label=device.label,
+        location=device.location,
+    ))
 
 
 def _apply(
@@ -78,7 +83,7 @@ def _apply(
 ) -> None:
     params = planner.params(device.did)
     if app_ctx.dry_run:
-        render.info("[dim]--dry-run，只解析不下发：[/dim]")
+        render.info(t("[dim]--dry-run，只解析不下发：[/dim]"))
         render.output(
             [
                 {
@@ -128,9 +133,9 @@ def _apply(
         result = _explain_code(code)
         if ok and key in actual:
             result = (
-                "成功"
+                t("成功")
                 if actual[key] == change.value
-                else f"已下发，回读仍是 {shown(change.prop, actual[key])}"
+                else t("已下发，回读仍是 {v0}", v0=shown(change.prop, actual[key]))
             )
         rows.append(
             {
@@ -154,19 +159,19 @@ def light(
     ctx: typer.Context,
     device: DeviceArg,
     on: Annotated[
-        Optional[bool], typer.Option("--on/--off", help="开灯 / 关灯")
+        Optional[bool], typer.Option("--on/--off", help=t("开灯 / 关灯"))
     ] = None,
     brightness: Annotated[
-        Optional[str], typer.Option("--brightness", "-b", help="亮度，一般是 1~100")
+        Optional[str], typer.Option("--brightness", "-b", help=t("亮度，一般是 1~100"))
     ] = None,
     ct: Annotated[
-        Optional[str], typer.Option("--ct", help="色温，单位开尔文，如 4000")
+        Optional[str], typer.Option("--ct", help=t("色温，单位开尔文，如 4000"))
     ] = None,
     color: Annotated[
-        Optional[str], typer.Option("--color", help="颜色，如 #ff8800 或 红")
+        Optional[str], typer.Option("--color", help=t("颜色，如 #ff8800 或 红"))
     ] = None,
     mode: Annotated[
-        Optional[str], typer.Option("--mode", help="模式，如 日光 / 月光")
+        Optional[str], typer.Option("--mode", help=t("模式，如 日光 / 月光"))
     ] = None,
     dry_run: DryRunOption = None,
     verify: VerifyOption = None,
@@ -196,16 +201,16 @@ def climate(
     ctx: typer.Context,
     device: DeviceArg,
     on: Annotated[
-        Optional[bool], typer.Option("--on/--off", help="开机 / 关机")
+        Optional[bool], typer.Option("--on/--off", help=t("开机 / 关机"))
     ] = None,
     mode: Annotated[
-        Optional[str], typer.Option("--mode", help="模式，如 制冷 / 制热 / 自动")
+        Optional[str], typer.Option("--mode", help=t("模式，如 制冷 / 制热 / 自动"))
     ] = None,
     temp: Annotated[
-        Optional[str], typer.Option("--temp", "-t", help="目标温度")
+        Optional[str], typer.Option("--temp", "-t", help=t("目标温度"))
     ] = None,
     fan: Annotated[
-        Optional[str], typer.Option("--fan", help="风速挡位")
+        Optional[str], typer.Option("--fan", help=t("风速挡位"))
     ] = None,
     dry_run: DryRunOption = None,
     verify: VerifyOption = None,
@@ -232,11 +237,11 @@ def climate(
 def cover(
     ctx: typer.Context,
     device: DeviceArg,
-    open_: Annotated[bool, typer.Option("--open", help="打开")] = False,
-    close: Annotated[bool, typer.Option("--close", help="关闭")] = False,
-    stop: Annotated[bool, typer.Option("--stop", help="停住")] = False,
+    open_: Annotated[bool, typer.Option("--open", help=t("打开"))] = False,
+    close: Annotated[bool, typer.Option("--close", help=t("关闭"))] = False,
+    stop: Annotated[bool, typer.Option("--stop", help=t("停住"))] = False,
     position: Annotated[
-        Optional[str], typer.Option("--position", "-p", help="开合百分比 0~100")
+        Optional[str], typer.Option("--position", "-p", help=t("开合百分比 0~100"))
     ] = None,
     dry_run: DryRunOption = None,
     verify: VerifyOption = None,
@@ -249,7 +254,7 @@ def cover(
         _show_status(app_ctx, target, spec, "cover", output)
         return
     if sum((open_, close, stop)) > 1:
-        raise typer.BadParameter("--open / --close / --stop 只能给一个")
+        raise typer.BadParameter(t("--open / --close / --stop 只能给一个"))
 
     planner = Planner(spec, target.label)
     if open_:
@@ -267,14 +272,14 @@ def fan(
     ctx: typer.Context,
     device: DeviceArg,
     on: Annotated[
-        Optional[bool], typer.Option("--on/--off", help="开 / 关")
+        Optional[bool], typer.Option("--on/--off", help=t("开 / 关"))
     ] = None,
     speed: Annotated[
-        Optional[str], typer.Option("--speed", "-s", help="风速挡位")
+        Optional[str], typer.Option("--speed", "-s", help=t("风速挡位"))
     ] = None,
-    mode: Annotated[Optional[str], typer.Option("--mode", help="模式")] = None,
+    mode: Annotated[Optional[str], typer.Option("--mode", help=t("模式"))] = None,
     swing: Annotated[
-        Optional[bool], typer.Option("--swing/--no-swing", help="摇头")
+        Optional[bool], typer.Option("--swing/--no-swing", help=t("摇头"))
     ] = None,
     dry_run: DryRunOption = None,
     verify: VerifyOption = None,

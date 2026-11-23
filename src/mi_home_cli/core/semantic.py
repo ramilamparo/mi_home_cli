@@ -10,6 +10,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from ..i18n import get_lang, t
 from ..errors import InvalidValue, SpecNotFound
 from .spec import DeviceSpec, Property, parse_value
 
@@ -30,6 +31,14 @@ NAMED_COLORS: dict[str, tuple[int, int, int]] = {
 _HEX_RE = re.compile(r"^#?([0-9a-fA-F]{6})$")
 
 
+def _color_examples() -> list[str]:
+    """报错提示里举例用的颜色名：英文界面只举英文名。"""
+    names = list(NAMED_COLORS)
+    if get_lang() == "en":
+        names = [name for name in names if name.isascii()]
+    return names[:6]
+
+
 def parse_color(text: str) -> int:
     """`#ff8800` / `ff8800` / `红` / `red` → spec 用的 uint32 RGB。"""
     value = text.strip()
@@ -40,10 +49,8 @@ def parse_color(text: str) -> int:
         red, green, blue = NAMED_COLORS[value.lower()]
     else:
         raise InvalidValue(
-            f"看不懂的颜色 `{text}`",
-            hint="写 #ff8800 这样的十六进制，或 " + "、".join(
-                list(NAMED_COLORS)[:6]
-            ),
+            t("看不懂的颜色 `{text}`", text=text),
+            hint=t("写 #ff8800 这样的十六进制，或 ") + t("、").join(_color_examples()),
         )
     return (red << 16) | (green << 8) | blue
 
@@ -94,9 +101,13 @@ class Planner:
         prop = self.spec.by_name(*names, writable=True)
         if prop is None:
             raise SpecNotFound(
-                f"{self.label} 不支持 {option}（spec 里没有可写的 "
-                f"{' / '.join(names)}）",
-                hint=f"用 `mi spec show {self.label} --writable` 看看支持什么",
+                t(
+                    "{label} 不支持 {option}（spec 里没有可写的 {v0}）",
+                    label=self.label,
+                    option=option,
+                    v0=' / '.join(names),
+                ),
+                hint=t("用 `mi spec show {label} --writable` 看看支持什么", label=self.label),
             )
         return prop
 
@@ -114,8 +125,13 @@ class Planner:
         value = enum_value(prop, *keywords)
         if value is None:
             raise SpecNotFound(
-                f"{self.label} 的 {prop.full_name} 里没有「{keywords[0]}」这一档",
-                hint="可选值：" + prop.range_text(),
+                t(
+                    "{label} 的 {full_name} 里没有「{v0}」这一档",
+                    label=self.label,
+                    full_name=prop.full_name,
+                    v0=keywords[0],
+                ),
+                hint=t("可选值：") + prop.range_text(),
             )
         self.changes.append(Change(prop, value))
 

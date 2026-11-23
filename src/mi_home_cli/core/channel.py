@@ -7,6 +7,7 @@ from __future__ import annotations
 import time
 from typing import Any, Protocol
 
+from ..i18n import t
 from ..errors import DeviceOffline, MiCliError
 from ..store import Profile
 from .cloud import CloudApi
@@ -90,21 +91,25 @@ class AutoChannel:
                     self._on_failure(err.message)
                 if self._on_note:
                     self._on_note(
-                        f"[dim]局域网{action}失败（{err.message}），改走云端[/dim]"
+                        t(
+                            "[dim]局域网{action}失败（{message}），改走云端[/dim]",
+                            action=action,
+                            message=err.message,
+                        )
                     )
         return call(self._cloud)
 
     def get_props(self, params: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return self._run("读取", lambda channel: channel.get_props(params))
+        return self._run(t("读取"), lambda channel: channel.get_props(params))
 
     def set_props(self, params: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return self._run("写入", lambda channel: channel.set_props(params))
+        return self._run(t("写入"), lambda channel: channel.set_props(params))
 
     def call_action(
         self, did: str, siid: int, aiid: int, values: list[Any]
     ) -> dict[str, Any]:
         return self._run(
-            "调用动作", lambda channel: channel.call_action(did, siid, aiid, values)
+            t("调用动作"), lambda channel: channel.call_action(did, siid, aiid, values)
         )
 
 
@@ -207,33 +212,47 @@ def open_device_channel(
 
     if not lan_capable(device):
         reason = (
-            "没有局域网 token"
+            t("没有局域网 token")
             if not device.token
-            else f"connect_type={device.connect_type}，不是直连路由器的设备"
-            "（蓝牙 Mesh / ZigBee 要走网关）"
+            else t(
+                "connect_type={connect_type}，不是直连路由器的设备（蓝牙 Mesh / ZigBee 要走网关）",
+                connect_type=device.connect_type,
+            )
         )
         if mode == "lan":
-            raise MiCliError(f"{device.label} 不能局域网直连：{reason}")
+            raise MiCliError(
+                t(
+                    "{label} 不能局域网直连：{reason}",
+                    label=device.label,
+                    reason=reason,
+                )
+            )
         return cloud
 
     failure = lan_failure(profile, device.did)
     if failure and mode == "auto":
         # 之前试过、这台设备在局域网上干不了活，别再浪费一轮往返
         if on_note:
-            on_note(f"[dim]跳过局域网（上次失败：{failure[1]}），走云端[/dim]")
+            on_note(t("[dim]跳过局域网（上次失败：{v0}），走云端[/dim]", v0=failure[1]))
         return cloud
 
     endpoint = locate(profile, device)
     if endpoint is None:
         if mode == "lan":
             raise DeviceOffline(
-                f"局域网上找不到 {device.label}",
-                hint="确认在同一网段、设备在线；`mi lan discover` 看看扫得到谁",
+                t("局域网上找不到 {label}", label=device.label),
+                hint=t("确认在同一网段、设备在线；`mi lan discover` 看看扫得到谁"),
             )
         return cloud
 
     if on_note:
-        on_note(f"[dim]局域网直连 {endpoint.ip}（{endpoint.elapsed_ms:.0f}ms）[/dim]")
+        on_note(
+            t(
+                "[dim]局域网直连 {ip}（{elapsed_ms:.0f}ms）[/dim]",
+                ip=endpoint.ip,
+                elapsed_ms=endpoint.elapsed_ms,
+            )
+        )
     lan = LanChannel(LanDevice(device.did, device.token or "", endpoint))
     if mode == "lan":
         return lan

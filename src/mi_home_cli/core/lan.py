@@ -30,6 +30,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
+from ..i18n import t
 from ..errors import DeviceOffline, MiCliError, NetworkError
 
 PORT = 54321
@@ -99,7 +100,7 @@ def discover(timeout: float = 3.0, address: str = BROADCAST) -> dict[str, Endpoi
         try:
             sock.sendto(HELLO, (address, PORT))
         except OSError as err:
-            raise NetworkError(f"广播失败：{err}") from err
+            raise NetworkError(t("广播失败：{err}", err=err)) from err
         deadline = time.time() + timeout
         while time.time() < deadline:
             try:
@@ -138,7 +139,7 @@ class LanDevice:
 
     def __init__(self, did: str, token: str, endpoint: Endpoint) -> None:
         if len(token) != 32:
-            raise MiCliError(f"token 长度不对（应为 32 个十六进制字符）：{token!r}")
+            raise MiCliError(t("token 长度不对（应为 32 个十六进制字符）：{token!r}", token=token))
         self.did = did
         self.endpoint = endpoint
         self._token = bytes.fromhex(token)
@@ -174,15 +175,15 @@ class LanDevice:
 
     def _parse(self, data: bytes) -> dict[str, Any]:
         if len(data) < HEADER_LEN or data[:2] != b"\x21\x31":
-            raise MiCliError("收到的不是 miIO 包")
+            raise MiCliError(t("收到的不是 miIO 包"))
         total = struct.unpack(">H", data[2:4])[0]
         buffer = bytearray(data[:total])
         checksum = bytes(buffer[16:32])
         buffer[16:32] = self._token
         if _md5(bytes(buffer)) != checksum:
             raise MiCliError(
-                "校验失败，token 不对",
-                hint="`mi device sync` 刷新一下设备清单，token 会随重新配网变化",
+                t("校验失败，token 不对"),
+                hint=t("`mi device sync` 刷新一下设备清单，token 会随重新配网变化"),
             )
         decryptor = self._cipher.decryptor()
         padded = decryptor.update(bytes(buffer[HEADER_LEN:total])) + decryptor.finalize()
@@ -214,7 +215,13 @@ class LanDevice:
                 except socket.timeout:
                     continue
                 except OSError as err:
-                    raise NetworkError(f"发往 {self.endpoint.ip} 失败：{err}") from err
+                    raise NetworkError(
+                        t(
+                            "发往 {ip} 失败：{err}",
+                            ip=self.endpoint.ip,
+                            err=err,
+                        )
+                    ) from err
                 response = self._parse(data)
                 if response.get("id") != payload["id"]:
                     # 上一次超时的迟到响应，丢掉继续等
@@ -222,15 +229,15 @@ class LanDevice:
                 if "error" in response:
                     error = response["error"]
                     raise MiCliError(
-                        f"设备返回错误：{error.get('message', error)}"
+                        t("设备返回错误：{v0}", v0=error.get('message', error))
                     )
                 return response.get("result")
             raise DeviceOffline(
-                f"{self.endpoint.ip} 在 {timeout * retries:.0f} 秒内没有响应",
+                t("{ip} 在 {v0:.0f} 秒内没有响应", ip=self.endpoint.ip, v0=timeout * retries),
                 hint=(
-                    "设备收不下这个包就不会回应答：token 不对（重新配网后会变，"
-                    "跑 `mi device sync` 刷新）、设备刚离线、或换了 IP"
-                    "（`mi lan discover` 重扫）"
+                    t(
+                        "设备收不下这个包就不会回应答：token 不对（重新配网后会变，跑 `mi device sync` 刷新）、设备刚离线、或换了 IP（`mi lan discover` 重扫）",
+                    )
                 ),
             )
         finally:

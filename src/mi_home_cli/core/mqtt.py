@@ -18,6 +18,7 @@ from typing import Any, Callable, Iterable
 
 import paho.mqtt.client as mqtt
 
+from ..i18n import t
 from ..errors import NetworkError
 from . import const
 
@@ -196,12 +197,12 @@ class CloudMqtt:
 
     def _handle_connect_fail(self, client, userdata=None):
         """TCP/TLS 阶段就没成——通常是端口不通或证书校验失败。"""
-        self._failure = "连不上 broker（TCP 或 TLS 阶段失败）"
+        self._failure = t("连不上 broker（TCP 或 TLS 阶段失败）")
 
     def _handle_connect(self, client, userdata, flags, reason_code, properties=None):
         if getattr(reason_code, "is_failure", False):
             # 走到这说明 TCP/TLS 通了，是 broker 拒绝了连接
-            self._failure = f"broker 拒绝连接：{reason_code}"
+            self._failure = t("broker 拒绝连接：{reason_code}", reason_code=reason_code)
             self._connected.clear()
             return
         # 断线重连后要把订阅重新报一遍
@@ -256,22 +257,34 @@ class CloudMqtt:
             try:
                 self._client.connect(host, BROKER_PORT, KEEPALIVE)
                 if index and self._on_note:
-                    self._on_note("系统根证书验不过，已改用 certifi 的证书库")
+                    self._on_note(t("系统根证书验不过，已改用 certifi 的证书库"))
                 break
             except ssl.SSLCertVerificationError as err:
                 last_error = err
                 continue
             except (OSError, ssl.SSLError) as err:
                 raise NetworkError(
-                    f"连接 {host}:{BROKER_PORT} 失败：{type(err).__name__}: {err}"
+                    t(
+                        "连接 {host}:{BROKER_PORT} 失败：{kind}: {err}",
+                        host=host,
+                        BROKER_PORT=BROKER_PORT,
+                        kind=type(err).__name__,
+                        err=err,
+                    )
                 ) from err
         else:
             raise NetworkError(
-                f"{host}:{BROKER_PORT} 的证书校验失败：{last_error}",
+                t(
+                    "{host}:{BROKER_PORT} 的证书校验失败：{last_error}",
+                    host=host,
+                    BROKER_PORT=BROKER_PORT,
+                    last_error=last_error,
+                ),
                 hint=(
-                    "系统根证书和 certifi 都验不过。若在用 Clash/Surge 这类代理，"
-                    "给 mqtt.io.mi.com 加条直连规则；确实需要中间人证书时用 "
-                    f"{CA_BUNDLE_ENV}=/path/to/ca.pem 指定"
+                    t(
+                        "系统根证书和 certifi 都验不过。若在用 Clash/Surge 这类代理，给 mqtt.io.mi.com 加条直连规则；确实需要中间人证书时用 {CA_BUNDLE_ENV}=/path/to/ca.pem 指定",
+                        CA_BUNDLE_ENV=CA_BUNDLE_ENV,
+                    )
                 ),
             )
         self._client.loop_start()
@@ -280,19 +293,30 @@ class CloudMqtt:
             self.stop()
             if failure:
                 raise NetworkError(
-                    f"连接 {broker_host(self.region)}:{BROKER_PORT} 失败：{failure}",
+                    t(
+                        "连接 {v0}:{BROKER_PORT} 失败：{failure}",
+                        v0=broker_host(self.region),
+                        BROKER_PORT=BROKER_PORT,
+                        failure=failure,
+                    ),
                     hint=(
-                        "broker 拒绝连接多半是凭据问题，先跑 "
-                        "`mi auth status --check`；"
-                        "TCP/TLS 阶段失败则是网络封了 8883 端口"
+                        t(
+                            "broker 拒绝连接多半是凭据问题，先跑 `mi auth status --check`；TCP/TLS 阶段失败则是网络封了 8883 端口",
+                        )
                     ),
                 )
             raise NetworkError(
-                f"连接 {broker_host(self.region)}:{BROKER_PORT} 超时"
-                f"（{timeout:.0f} 秒内没有任何回应）",
+                t(
+                    "连接 {v0}:{BROKER_PORT} 超时（{timeout:.0f} 秒内没有任何回应）",
+                    v0=broker_host(self.region),
+                    BROKER_PORT=BROKER_PORT,
+                    timeout=timeout,
+                ),
                 hint=(
-                    "多半是出口封了 8883 端口。用 `mi doctor` 看一眼，"
-                    "或 `nc -vz " + broker_host(self.region) + " 8883` 直接测"
+                    t(
+                        "多半是出口封了 8883 端口。用 `mi doctor` 看一眼，或 `nc -vz {host} 8883` 直接测",
+                        host=broker_host(self.region),
+                    )
                 ),
             )
 

@@ -6,6 +6,7 @@ from typing import Annotated, Any, Optional
 
 import typer
 
+from ..i18n import t
 from .. import render
 from ..core.channel import DeviceChannel, open_device_channel
 from ..core.registry import Device
@@ -51,7 +52,7 @@ def _channel(
 def _target(app_ctx: AppContext, ref: str) -> tuple[Device, DeviceSpec]:
     device, spec = load_spec(app_ctx, ref)
     if device is None:  # load_spec 只有传 urn 时才会是 None
-        raise UsageError("这里需要一台具体设备，不能只给 urn")
+        raise UsageError(t("这里需要一台具体设备，不能只给 urn"))
     return device, spec
 
 
@@ -115,13 +116,13 @@ def describe_action_output(
 def _explain_code(code: int) -> str:
     """把常见的返回码翻成人话。"""
     return {
-        0: "成功",
-        1: "已接受",
-        -704010000: "设备不在线",
-        -704042011: "设备不支持这个属性",
-        -704220025: "属性不可写",
-        -704053026: "设备拒绝（可能被童锁/物理开关限制）",
-    }.get(code, f"失败（code={code}）")
+        0: t("成功"),
+        1: t("已接受"),
+        -704010000: t("设备不在线"),
+        -704042011: t("设备不支持这个属性"),
+        -704220025: t("属性不可写"),
+        -704053026: t("设备拒绝（可能被童锁/物理开关限制）"),
+    }.get(code, t("失败（code={code}）", code=code))
 
 
 def verify_after_write(
@@ -166,9 +167,9 @@ def verify_after_write(
 
 def get(
     ctx: typer.Context,
-    device: Annotated[str, typer.Argument(help="设备名称、别名或 did")],
+    device: Annotated[str, typer.Argument(help=t("设备名称、别名或 did"))],
     props: Annotated[
-        Optional[list[str]], typer.Argument(help="属性，如 on / light.brightness / 2.1")
+        Optional[list[str]], typer.Argument(help=t("属性，如 on / light.brightness / 2.1"))
     ] = None,
     output: OutputOption = None,
 ) -> None:
@@ -180,11 +181,11 @@ def get(
         wanted: list[Property] = [spec.find_property(ref) for ref in props]
         unreadable = [p.full_name for p in wanted if not p.readable]
         if unreadable:
-            raise UsageError(f"这些属性不可读：{'、'.join(unreadable)}")
+            raise UsageError(t("这些属性不可读：{v0}", v0=t('、').join(unreadable)))
     else:
         wanted = [p for p in spec.properties if p.readable]
         if not wanted:
-            raise SpecNotFound(f"{target.label} 没有可读属性")
+            raise SpecNotFound(t("{label} 没有可读属性", label=target.label))
 
     with app_ctx.session() as session:
         results = _channel(app_ctx, session, target).get_props(
@@ -221,14 +222,18 @@ def get(
                 else _explain_code(int(code)),
             }
         )
-    render.output(rows, fmt, title=f"{target.label}（{target.location}）")
+    render.output(rows, fmt, title=t(
+        "{label}（{location}）",
+        label=target.label,
+        location=target.location,
+    ))
 
 
 def set_(
     ctx: typer.Context,
-    device: Annotated[str, typer.Argument(help="设备名称、别名或 did")],
+    device: Annotated[str, typer.Argument(help=t("设备名称、别名或 did"))],
     assignments: Annotated[
-        list[str], typer.Argument(help="属性=值，可以写多个，如 on=true brightness=60")
+        list[str], typer.Argument(help=t("属性=值，可以写多个，如 on=true brightness=60"))
     ],
     dry_run: DryRunOption = None,
     verify: VerifyOption = None,
@@ -242,13 +247,13 @@ def set_(
     props: list[Property] = []
     for item in assignments:
         if "=" not in item:
-            raise UsageError(f"`{item}` 不是 属性=值 的形式")
+            raise UsageError(t("`{item}` 不是 属性=值 的形式", item=item))
         ref, raw = item.split("=", 1)
         prop = spec.find_property(ref)
         if not prop.writable:
             raise InvalidValue(
-                f"{prop.full_name} 不可写",
-                hint=f"权限是 {prop.access_text()}",
+                t("{full_name} 不可写", full_name=prop.full_name),
+                hint=t("权限是 {v0}", v0=prop.access_text()),
             )
         value = parse_value(prop, raw)
         props.append(prop)
@@ -257,7 +262,7 @@ def set_(
         )
 
     if app_ctx.dry_run:
-        render.info("[dim]--dry-run，只解析不下发：[/dim]")
+        render.info(t("[dim]--dry-run，只解析不下发：[/dim]"))
         render.output(
             [
                 {
@@ -295,9 +300,9 @@ def set_(
         result = _explain_code(code)
         if ok and key in actual:
             if actual[key] == param["value"]:
-                result = "成功"
+                result = t("成功")
             else:
-                result = f"已下发，回读仍是 {format_value(prop, actual[key])}"
+                result = t("已下发，回读仍是 {v0}", v0=format_value(prop, actual[key]))
                 lagging = True
         old = before.get(key)
         rows.append(
@@ -310,19 +315,19 @@ def set_(
         )
     render.output(rows, pick_output(app_ctx, output), title=target.label)
     if lagging:
-        render.warn("云端读回的值还没跟上，可能是设备上报有延迟；隔几秒再 `mi get` 看看")
+        render.warn(t("云端读回的值还没跟上，可能是设备上报有延迟；隔几秒再 `mi get` 看看"))
     if failed:
         raise typer.Exit(code=CloudError.exit_code)
 
 
 def action(
     ctx: typer.Context,
-    device: Annotated[str, typer.Argument(help="设备名称、别名或 did")],
+    device: Annotated[str, typer.Argument(help=t("设备名称、别名或 did"))],
     name: Annotated[
-        Optional[str], typer.Argument(help="动作名，不写则列出所有动作")
+        Optional[str], typer.Argument(help=t("动作名，不写则列出所有动作"))
     ] = None,
     values: Annotated[
-        Optional[list[str]], typer.Option("--in", help="按顺序传入参，可重复")
+        Optional[list[str]], typer.Option("--in", help=t("按顺序传入参，可重复"))
     ] = None,
     dry_run: DryRunOption = None,
     output: OutputOption = None,
@@ -344,7 +349,7 @@ def action(
                 for item in spec.actions
             ],
             fmt,
-            title=f"{target.label} 支持的动作",
+            title=t("{label} 支持的动作", label=target.label),
         )
         return
 
@@ -352,10 +357,14 @@ def action(
     raw_values = list(values or [])
     if len(raw_values) != len(target_action.in_piids):
         raise UsageError(
-            f"{target_action.full_name} 需要 {len(target_action.in_piids)} 个入参"
-            f"（{describe_action_inputs(spec, target_action) or '无'}），"
-            f"给了 {len(raw_values)} 个",
-            hint="用 --in 依次传入，顺序按上面列的入参",
+            t(
+                "{full_name} 需要 {v0} 个入参（{v1}），给了 {n_raw_values} 个",
+                full_name=target_action.full_name,
+                v0=len(target_action.in_piids),
+                v1=describe_action_inputs(spec, target_action) or t('无'),
+                n_raw_values=len(raw_values),
+            ),
+            hint=t("用 --in 依次传入，顺序按上面列的入参"),
         )
     parsed: list[Any] = []
     for piid, raw in zip(target_action.in_piids, raw_values):
@@ -364,8 +373,13 @@ def action(
 
     if app_ctx.dry_run:
         render.info(
-            f"[dim]--dry-run：{target.label} {target_action.full_name}"
-            f"（{target_action.ref}）入参 {parsed}[/dim]"
+            t(
+                "[dim]--dry-run：{label} {full_name}（{ref}）入参 {parsed}[/dim]",
+                label=target.label,
+                full_name=target_action.full_name,
+                ref=target_action.ref,
+                parsed=parsed,
+            )
         )
         return
 
@@ -399,17 +413,23 @@ def _switch(app_ctx: AppContext, device: str, value: bool | None) -> None:
     ]
     if not candidates:
         raise SpecNotFound(
-            f"{target.label} 没有可写的开关属性",
-            hint="用 `mi spec show` 看看它支持什么，再用 `mi set`",
+            t("{label} 没有可写的开关属性", label=target.label),
+            hint=t("用 `mi spec show` 看看它支持什么，再用 `mi set`"),
         )
     # 多个服务都有 on 时（比如带夜灯的灯），取 siid 最小的主服务
     prop = min(candidates, key=lambda p: (p.siid, p.piid))
     if app_ctx.dry_run:
         # toggle 的目标值取决于当前状态，dry-run 不读设备就说不准，如实标注
-        target_value = "取反当前状态" if value is None else format_value(prop, value)
+        target_value = t("取反当前状态") if value is None else format_value(prop, value)
         render.info(
-            f"[dim]--dry-run：{target.label}（{target.location}）"
-            f" → {prop.full_name}（{prop.ref}）= {target_value}[/dim]"
+            t(
+                "[dim]--dry-run：{label}（{location}） → {full_name}（{ref}）= {target_value}[/dim]",
+                label=target.label,
+                location=target.location,
+                full_name=prop.full_name,
+                ref=prop.ref,
+                target_value=target_value,
+            )
         )
         return
     with app_ctx.session() as session:
@@ -419,7 +439,7 @@ def _switch(app_ctx: AppContext, device: str, value: bool | None) -> None:
                 [{"did": target.did, "siid": prop.siid, "piid": prop.piid}]
             )
             if not current or current[0].get("code") != 0:
-                raise CloudError(f"读不到 {target.label} 的当前开关状态")
+                raise CloudError(t("读不到 {label} 的当前开关状态", label=target.label))
             value = not bool(current[0].get("value"))
         results = api.set_props(
             [
@@ -439,22 +459,31 @@ def _switch(app_ctx: AppContext, device: str, value: bool | None) -> None:
         )
     if code not in ACCEPTED_CODES:
         render.error(
-            f"{target.label} {'开' if value else '关'}失败：{_explain_code(code)}"
+            t("{label} 开失败：{reason}", label=target.label, reason=_explain_code(code))
+            if value
+            else t("{label} 关失败：{reason}", label=target.label, reason=_explain_code(code))
         )
         raise typer.Exit(code=CloudError.exit_code)
     readback = actual.get((prop.siid, prop.piid))
     if readback is not None and readback != value:
         render.warn(
-            f"{target.label} 指令已下发，但回读仍是"
-            f"{format_value(prop, readback)}，可能是上报延迟"
+            t(
+                "{label} 指令已下发，但回读仍是{v0}，可能是上报延迟",
+                label=target.label,
+                v0=format_value(prop, readback),
+            )
         )
         return
-    render.success(f"{target.label} 已{'打开' if value else '关闭'}")
+    render.success(
+        t("{label} 已打开", label=target.label)
+        if value
+        else t("{label} 已关闭", label=target.label)
+    )
 
 
 def on(
     ctx: typer.Context,
-    device: Annotated[str, typer.Argument(help="设备名称、别名或 did")],
+    device: Annotated[str, typer.Argument(help=t("设备名称、别名或 did"))],
     dry_run: DryRunOption = None,
     verify: VerifyOption = None,
 ) -> None:
@@ -464,7 +493,7 @@ def on(
 
 def off(
     ctx: typer.Context,
-    device: Annotated[str, typer.Argument(help="设备名称、别名或 did")],
+    device: Annotated[str, typer.Argument(help=t("设备名称、别名或 did"))],
     dry_run: DryRunOption = None,
     verify: VerifyOption = None,
 ) -> None:
@@ -474,7 +503,7 @@ def off(
 
 def toggle(
     ctx: typer.Context,
-    device: Annotated[str, typer.Argument(help="设备名称、别名或 did")],
+    device: Annotated[str, typer.Argument(help=t("设备名称、别名或 did"))],
     dry_run: DryRunOption = None,
     verify: VerifyOption = None,
 ) -> None:

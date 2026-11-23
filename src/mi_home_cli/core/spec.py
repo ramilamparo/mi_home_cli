@@ -13,6 +13,7 @@ from typing import Any
 
 import httpx
 
+from ..i18n import t
 from ..errors import AmbiguousReference, InvalidValue, NetworkError, SpecNotFound
 from ..store import Profile
 
@@ -294,7 +295,7 @@ class DeviceSpec:
         if numeric:
             prop = self.property_at(int(numeric[1]), int(numeric[2]))
             if prop is None:
-                raise SpecNotFound(f"这台设备没有属性 {ref}")
+                raise SpecNotFound(t("这台设备没有属性 {ref}", ref=ref))
             return prop
         lowered = ref.lower()
         stages = [
@@ -309,16 +310,21 @@ class DeviceSpec:
                 return candidates[0]
             if len(candidates) > 1:
                 raise AmbiguousReference(
-                    f"`{ref}` 匹配到多个属性：\n"
+                    t("`{ref}` 匹配到多个属性：\n", ref=ref)
                     + "\n".join(
-                        f"  {p.full_name}（{p.ref}，{p.description}）"
+                        t(
+                            "  {full_name}（{ref}，{description}）",
+                            full_name=p.full_name,
+                            ref=p.ref,
+                            description=p.description,
+                        )
                         for p in candidates[:10]
                     ),
-                    hint="用 service.property 全名或 siid.piid",
+                    hint=t("用 service.property 全名或 siid.piid"),
                 )
         raise SpecNotFound(
-            f"这台设备没有属性 `{ref}`",
-            hint="用 `mi spec show <设备>` 看看有哪些属性",
+            t("这台设备没有属性 `{ref}`", ref=ref),
+            hint=t("用 `mi spec show <设备>` 看看有哪些属性"),
         )
 
     def find_action(self, ref: str) -> Action:
@@ -329,7 +335,7 @@ class DeviceSpec:
             for action in self.actions:
                 if action.siid == siid and action.aiid == aiid:
                     return action
-            raise SpecNotFound(f"这台设备没有动作 {ref}")
+            raise SpecNotFound(t("这台设备没有动作 {ref}", ref=ref))
         lowered = ref.lower()
         stages = [
             [a for a in self.actions if a.full_name.lower() == lowered],
@@ -343,16 +349,21 @@ class DeviceSpec:
                 return candidates[0]
             if len(candidates) > 1:
                 raise AmbiguousReference(
-                    f"`{ref}` 匹配到多个动作：\n"
+                    t("`{ref}` 匹配到多个动作：\n", ref=ref)
                     + "\n".join(
-                        f"  {a.full_name}（{a.ref}，{a.description}）"
+                        t(
+                            "  {full_name}（{ref}，{description}）",
+                            full_name=a.full_name,
+                            ref=a.ref,
+                            description=a.description,
+                        )
                         for a in candidates[:10]
                     ),
-                    hint="用 service.action 全名或 siid.aiid",
+                    hint=t("用 service.action 全名或 siid.aiid"),
                 )
         raise SpecNotFound(
-            f"这台设备没有动作 `{ref}`",
-            hint="用 `mi action list <设备>` 看看有哪些动作",
+            t("这台设备没有动作 `{ref}`", ref=ref),
+            hint=t("用 `mi action list <设备>` 看看有哪些动作"),
         )
 
 
@@ -368,8 +379,8 @@ def parse_value(prop: Property, raw: str) -> Any:
         if text.lower() in _FALSE_WORDS:
             return False
         raise InvalidValue(
-            f"{prop.full_name} 是开关量，`{raw}` 不认识",
-            hint="写 on/off、true/false、1/0 都行",
+            t("{full_name} 是开关量，`{raw}` 不认识", full_name=prop.full_name, raw=raw),
+            hint=t("写 on/off、true/false、1/0 都行"),
         )
     if prop.value_list:
         for item in prop.value_list:
@@ -379,19 +390,31 @@ def parse_value(prop: Property, raw: str) -> Any:
             if text == str(item.value):
                 return item.value
         raise InvalidValue(
-            f"{prop.full_name} 不接受 `{raw}`",
-            hint="可选值：" + prop.range_text(),
+            t("{full_name} 不接受 `{raw}`", full_name=prop.full_name, raw=raw),
+            hint=t("可选值：") + prop.range_text(),
         )
     if prop.format.startswith(("uint", "int")):
         try:
             value: Any = int(text, 0)
         except ValueError as err:
-            raise InvalidValue(f"{prop.full_name} 要整数，给的是 `{raw}`") from err
+            raise InvalidValue(
+                t(
+                    "{full_name} 要整数，给的是 `{raw}`",
+                    full_name=prop.full_name,
+                    raw=raw,
+                )
+            ) from err
     elif prop.format == "float":
         try:
             value = float(text)
         except ValueError as err:
-            raise InvalidValue(f"{prop.full_name} 要数字，给的是 `{raw}`") from err
+            raise InvalidValue(
+                t(
+                    "{full_name} 要数字，给的是 `{raw}`",
+                    full_name=prop.full_name,
+                    raw=raw,
+                )
+            ) from err
     else:
         return text
 
@@ -399,7 +422,13 @@ def parse_value(prop: Property, raw: str) -> Any:
         low, high = prop.value_range[0], prop.value_range[1]
         if value < low or value > high:
             raise InvalidValue(
-                f"{prop.full_name} 的取值范围是 {low}~{high}，给的是 {value}"
+                t(
+                    "{full_name} 的取值范围是 {low}~{high}，给的是 {value}",
+                    full_name=prop.full_name,
+                    low=low,
+                    high=high,
+                    value=value,
+                )
             )
     return value
 
@@ -414,7 +443,7 @@ def format_value(prop: Property, value: Any) -> str:
     if value is None:
         return "-"
     if prop.format == "bool":
-        return "开" if value else "关"
+        return t("开") if value else t("关")
     for item in prop.value_list:
         if item.value == value:
             return f"{item.description}({value})"
@@ -472,9 +501,9 @@ class SpecStore:
         try:
             instance = self._client.get(INSTANCE_URL, params={"type": urn}).json()
         except (httpx.HTTPError, ValueError) as err:
-            raise NetworkError(f"获取 spec 失败（{urn}）：{err}") from err
+            raise NetworkError(t("获取 spec 失败（{urn}）：{err}", urn=urn, err=err)) from err
         if not isinstance(instance, dict) or "services" not in instance:
-            raise SpecNotFound(f"miot-spec.org 没有返回有效的 spec：{urn}")
+            raise SpecNotFound(t("miot-spec.org 没有返回有效的 spec：{urn}", urn=urn))
         translations: dict[str, Any] = {}
         try:
             data = self._client.get(MULTI_LANG_URL, params={"urn": urn}).json()

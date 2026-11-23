@@ -34,6 +34,7 @@ from urllib.parse import urlencode, urljoin, urlparse
 
 import httpx
 
+from ..i18n import t
 from ..errors import CloudError, MiCliError, NetworkError
 from .callback import CallbackResult, parse_pasted
 from .oauth import build_auth_url
@@ -170,7 +171,13 @@ class QrLoginClient:
             else:
                 response = self._client.get(url, timeout=timeout)
         except httpx.HTTPError as err:
-            raise NetworkError(f"连接 {urlparse(url).netloc} 失败：{err}") from err
+            raise NetworkError(
+                t(
+                    "连接 {netloc} 失败：{err}",
+                    netloc=urlparse(url).netloc,
+                    err=err,
+                )
+            ) from err
         if self._trace:
             self._trace(f"<- HTTP {response.status_code}")
         return response
@@ -180,10 +187,10 @@ class QrLoginClient:
             obj = json.loads(_strip_prefix(response.text))
         except ValueError as err:
             raise CloudError(
-                f"账号接口响应不是合法 JSON：{response.text[:200]}"
+                t("账号接口响应不是合法 JSON：{v0}", v0=response.text[:200])
             ) from err
         if not isinstance(obj, dict):
-            raise CloudError("账号接口响应结构异常")
+            raise CloudError(t("账号接口响应结构异常"))
         return obj
 
     def start(self, *, skip_confirm: bool = True) -> QrChallenge:
@@ -197,8 +204,8 @@ class QrLoginClient:
         login_page = self._get(authorize).headers.get("location")
         if not login_page:
             raise CloudError(
-                "授权页没有跳转到登录页",
-                hint="小米可能调整了登录流程，改用 `mi auth login`（浏览器/粘贴）",
+                t("授权页没有跳转到登录页"),
+                hint=t("小米可能调整了登录流程，改用 `mi auth login`（浏览器/粘贴）"),
             )
 
         sep = "&" if "?" in login_page else "?"
@@ -207,8 +214,10 @@ class QrLoginClient:
         code = service.get("code")
         if code not in (None, 0, _NOT_LOGGED_IN):
             raise CloudError(
-                f"获取登录参数失败："
-                f"{service.get('description') or service.get('desc') or code}",
+                t(
+                    "获取登录参数失败：{v0}",
+                    v0=service.get('description') or service.get('desc') or code,
+                ),
                 code=code,
             )
         missing = [
@@ -218,8 +227,8 @@ class QrLoginClient:
         ]
         if missing:
             raise CloudError(
-                f"登录页响应缺少字段：{', '.join(missing)}",
-                hint="小米可能调整了登录流程，改用 `mi auth login`",
+                t("登录页响应缺少字段：{v0}", v0=', '.join(missing)),
+                hint=t("小米可能调整了登录流程，改用 `mi auth login`"),
             )
 
         lp_params = {
@@ -243,8 +252,10 @@ class QrLoginClient:
         )
         if obj.get("code") != 0 or not obj.get("loginUrl") or not obj.get("lp"):
             raise CloudError(
-                f"获取二维码失败："
-                f"{obj.get('description') or obj.get('desc') or obj.get('code')}",
+                t(
+                    "获取二维码失败：{v0}",
+                    v0=obj.get('description') or obj.get('desc') or obj.get('code'),
+                ),
                 code=obj.get("code"),
             )
         return QrChallenge(
@@ -271,8 +282,8 @@ class QrLoginClient:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise MiCliError(
-                    "扫码登录超时（二维码已失效）",
-                    hint="重新执行 `mi auth login --scan`",
+                    t("扫码登录超时（二维码已失效）"),
+                    hint=t("重新执行 `mi auth login --scan`"),
                 )
             try:
                 response = self._client.get(
@@ -281,7 +292,7 @@ class QrLoginClient:
             except httpx.ReadTimeout:
                 continue  # 单次挂到点，重发
             except httpx.HTTPError as err:
-                raise NetworkError(f"长轮询失败：{err}") from err
+                raise NetworkError(t("长轮询失败：{err}", err=err)) from err
 
             obj = self._json(response)
             code = obj.get("code")
@@ -294,8 +305,7 @@ class QrLoginClient:
                     time.sleep(poll_interval)
                 continue
             raise CloudError(
-                f"扫码登录失败："
-                f"{obj.get('description') or obj.get('desc') or code}",
+                t("扫码登录失败：{v0}", v0=obj.get('description') or obj.get('desc') or code),
                 code=code,
             )
 
@@ -312,9 +322,9 @@ class QrLoginClient:
             nxt = response.headers.get("location")
             if not nxt:
                 raise CloudError(
-                    "跳转链没有回到回调地址就停了，可能需要在手机上完成授权确认",
+                    t("跳转链没有回到回调地址就停了，可能需要在手机上完成授权确认"),
                     code=response.status_code,
-                    hint="在手机上点「同意/授权」后重试，或改用 `mi auth login`",
+                    hint=t("在手机上点「同意/授权」后重试，或改用 `mi auth login`"),
                 )
             url = urljoin(url, nxt)
-        raise CloudError("跳转次数过多，未能取到授权码")
+        raise CloudError(t("跳转次数过多，未能取到授权码"))

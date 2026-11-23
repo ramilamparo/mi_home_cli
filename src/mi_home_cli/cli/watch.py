@@ -11,6 +11,7 @@ from typing import Annotated, Any, Optional
 
 import typer
 
+from ..i18n import t
 from .. import render
 from ..core.mqtt import CloudMqtt, Message, topic_events, topic_props, topic_state
 from ..core.registry import Device
@@ -40,12 +41,12 @@ def _load_specs(
         urn for urn in urns if not store._cache_path(urn).exists()  # noqa: SLF001
     ]
     if missing:
-        render.info(f"[dim]首次运行，正在拉取 {len(missing)} 份 spec…[/dim]")
+        render.info(t("[dim]首次运行，正在拉取 {n_missing} 份 spec…[/dim]", n_missing=len(missing)))
     for urn in urns:
         try:
             specs[urn] = store.get(urn)
         except Exception as err:  # 单个 spec 挂了不该拖垮整个 watch
-            render.warn(f"spec 获取失败（{urn}）：{err}")
+            render.warn(t("spec 获取失败（{urn}）：{err}", urn=urn, err=err))
     return specs
 
 
@@ -65,9 +66,9 @@ def _describe(
     if message.kind == "state":
         return {
             **base,
-            "类型": "上下线",
+            "类型": t("上下线"),
             "名称": "-",
-            "变化": "上线" if message.state == "online" else "离线",
+            "变化": t("上线") if message.state == "online" else t("离线"),
             "_json": {"kind": "state", "state": message.state},
         }
     if message.kind == "event":
@@ -84,7 +85,7 @@ def _describe(
         name = event.full_name if event else f"{message.siid}.{message.iid}"
         return {
             **base,
-            "类型": "事件",
+            "类型": t("事件"),
             "名称": event.description if event else name,
             "变化": json.dumps(message.arguments, ensure_ascii=False)
             if message.arguments
@@ -111,7 +112,7 @@ def _describe(
     )
     return {
         **base,
-        "类型": "属性",
+        "类型": t("属性"),
         "名称": prop.description if prop else name,
         "变化": f"{shown_old} → {shown_new}" if shown_old is not None else shown_new,
         "_json": {
@@ -126,30 +127,30 @@ def _describe(
 def watch(
     ctx: typer.Context,
     devices: Annotated[
-        Optional[list[str]], typer.Argument(help="要盯的设备，不给就盯全部")
+        Optional[list[str]], typer.Argument(help=t("要盯的设备，不给就盯全部"))
     ] = None,
     props: Annotated[
         Optional[list[str]],
-        typer.Option("--prop", help="只看这些属性，可重复，如 --prop on"),
+        typer.Option("--prop", help=t("只看这些属性，可重复，如 --prop on")),
     ] = None,
     events: Annotated[
-        bool, typer.Option("--events/--no-events", help="是否包含事件")
+        bool, typer.Option("--events/--no-events", help=t("是否包含事件"))
     ] = True,
     state: Annotated[
-        bool, typer.Option("--state/--no-state", help="是否包含上下线")
+        bool, typer.Option("--state/--no-state", help=t("是否包含上下线"))
     ] = True,
     all_updates: Annotated[
         bool,
         typer.Option(
             "--all-updates",
-            help="连值没变的周期上报也显示（默认只显示真的变化）",
+            help=t("连值没变的周期上报也显示（默认只显示真的变化）"),
         ),
     ] = False,
     exit_after: Annotated[
-        Optional[int], typer.Option("--exit-after", help="收到 N 条后退出")
+        Optional[int], typer.Option("--exit-after", help=t("收到 N 条后退出"))
     ] = None,
     duration: Annotated[
-        Optional[float], typer.Option("--duration", help="盯多少秒后退出")
+        Optional[float], typer.Option("--duration", help=t("盯多少秒后退出"))
     ] = None,
     output: OutputOption = None,
 ) -> None:
@@ -163,7 +164,7 @@ def watch(
     else:
         targets = registry.filter(**scope)
     if not targets:
-        raise UsageError("没有可盯的设备")
+        raise UsageError(t("没有可盯的设备"))
 
     specs = _load_specs(app_ctx, targets)
     by_did = {device.did: device for device in targets}
@@ -190,13 +191,16 @@ def watch(
             debug=app_ctx.verbose,
             on_note=lambda text: render.info(f"[dim]{text}[/dim]"),
             on_state_change=lambda ok: render.info(
-                "[dim]已连接[/dim]" if ok else "[yellow]连接断开，正在重连…[/yellow]"
+                t("[dim]已连接[/dim]") if ok else t("[yellow]连接断开，正在重连…[/yellow]")
             ),
         )
         client.subscribe(topics)
         render.info(
-            f"[dim]盯着 {len(targets)} 台设备"
-            f"（{len(topics)} 个订阅），Ctrl-C 退出[/dim]"
+            t(
+                "[dim]盯着 {n_targets} 台设备（{n_topics} 个订阅），Ctrl-C 退出[/dim]",
+                n_targets=len(targets),
+                n_topics=len(topics),
+            )
         )
         previous: dict[tuple[str, int, int], Any] = {}
         seen = 0
@@ -241,8 +245,8 @@ def watch(
             render.info("")
         finally:
             client.stop()
-        tail = f"，另有 {repeats} 条值未变的上报已跳过" if repeats else ""
-        render.info(f"[dim]共 {seen} 条{tail}[/dim]")
+        tail = t("，另有 {repeats} 条值未变的上报已跳过", repeats=repeats) if repeats else ""
+        render.info(t("[dim]共 {seen} 条{tail}[/dim]", seen=seen, tail=tail))
 
 
 def _emit(row: dict[str, Any], fmt: OutputFormat, device: Device) -> None:
@@ -270,7 +274,7 @@ def _emit(row: dict[str, Any], fmt: OutputFormat, device: Device) -> None:
             flush=True,
         )
         return
-    icon = {"属性": "·", "事件": "!", "上下线": "~"}.get(str(row["类型"]), "·")
+    icon = {t("属性"): "·", t("事件"): "!", t("上下线"): "~"}.get(str(row["类型"]), "·")
     render.stream(
         f"[dim]{row['时间']}[/dim] {icon} [cyan]{row['设备']}[/cyan]"
         f" [dim]{row['房间']}[/dim] {row['名称']}  {row['变化']}"

@@ -8,6 +8,7 @@ from __future__ import annotations
 import re
 from typing import Any, Iterable
 
+from ..i18n import t
 from ..errors import CloudError
 from .session import Session
 
@@ -48,7 +49,7 @@ class CloudApi:
             },
         ).get("result")
         if not isinstance(res, dict):
-            raise CloudError("gethome 响应缺少 result")
+            raise CloudError(t("gethome 响应缺少 result"))
 
         uid: str | None = None
         homes: list[dict[str, Any]] = []
@@ -98,7 +99,7 @@ class CloudApi:
             "result"
         )
         if not isinstance(res, dict):
-            raise CloudError("device_list_page 响应缺少 result")
+            raise CloudError(t("device_list_page 响应缺少 result"))
 
         devices: dict[str, dict[str, Any]] = {}
         for item in res.get("list") or []:
@@ -177,7 +178,7 @@ class CloudApi:
                 if did in devices:
                     continue
                 owner = info.get("owner") or {}
-                owner_name = owner.get("nickname") or "共享设备"
+                owner_name = owner.get("nickname") or t("共享设备")
                 info.update(
                     {
                         "home_id": f"shared:{owner.get('userid', '')}",

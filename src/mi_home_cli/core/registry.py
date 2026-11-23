@@ -8,6 +8,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..i18n import t
 from ..errors import AmbiguousReference, DeviceNotFound
 from ..store import Profile
 
@@ -48,7 +49,7 @@ class Device:
             "家庭": self.home_name or "-",
             "房间": self.room_name or "-",
             "型号": self.model,
-            "在线": "是" if self.online else "否",
+            "在线": t("是") if self.online else t("否"),
         }
         if wide:
             row.update(
@@ -70,7 +71,7 @@ class Device:
             "厂商": self.manufacturer,
             "家庭": self.home_name or "-",
             "房间": self.room_name or "-",
-            "在线": "是" if self.online else "否",
+            "在线": t("是") if self.online else t("否"),
             "局域网 IP": self.local_ip or "-",
             "固件版本": self.fw_version or "-",
         }
@@ -216,12 +217,12 @@ class Registry:
                 return candidates[0]
             if len(candidates) > 1:
                 raise AmbiguousReference(
-                    f"`{ref}` 匹配到多个家庭："
-                    + "、".join(h["home_name"] for h in candidates)
+                    t("`{ref}` 匹配到多个家庭：", ref=ref)
+                    + t("、").join(h["home_name"] for h in candidates)
                 )
         raise DeviceNotFound(
-            f"没有找到家庭 `{ref}`",
-            hint="用 `mi home list` 看看有哪些家庭",
+            t("没有找到家庭 `{ref}`", ref=ref),
+            hint=t("用 `mi home list` 看看有哪些家庭"),
         )
 
     def resolve(self, ref: str, **filters: Any) -> Device:
@@ -232,7 +233,7 @@ class Registry:
         """
         pool = self.filter(**filters)
         if not pool:
-            raise DeviceNotFound("当前过滤条件下没有任何设备")
+            raise DeviceNotFound(t("当前过滤条件下没有任何设备"))
         needle = ref.strip()
         lowered = needle.lower()
 
@@ -254,15 +255,25 @@ class Registry:
                 return candidates[0]
             if len(candidates) > 1:
                 raise AmbiguousReference(
-                    f"`{ref}` 匹配到 {len(candidates)} 台设备：\n"
+                    t(
+                        "`{ref}` 匹配到 {n_candidates} 台设备：\n",
+                        ref=ref,
+                        n_candidates=len(candidates),
+                    )
                     + "\n".join(
-                        f"  {d.location} / {d.label}（{d.model}，did {d.did}）"
+                        t(
+                            "  {location} / {label}（{model}，did {did}）",
+                            location=d.location,
+                            label=d.label,
+                            model=d.model,
+                            did=d.did,
+                        )
                         for d in candidates[:10]
                     )
                     + ("\n  …" if len(candidates) > 10 else ""),
-                    hint="用完整名称、别名或 did，也可以加 --home / --room 缩小范围",
+                    hint=t("用完整名称、别名或 did，也可以加 --home / --room 缩小范围"),
                 )
         raise DeviceNotFound(
-            f"没有找到设备 `{ref}`",
-            hint="用 `mi device list` 看看有哪些设备，或 `mi device sync` 刷新缓存",
+            t("没有找到设备 `{ref}`", ref=ref),
+            hint=t("用 `mi device list` 看看有哪些设备，或 `mi device sync` 刷新缓存"),
         )

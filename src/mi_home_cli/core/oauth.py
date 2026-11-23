@@ -19,6 +19,7 @@ from urllib.parse import urlencode
 
 import httpx
 
+from ..i18n import t
 from ..errors import CloudError, NetworkError
 from ..store import AuthData
 from . import const
@@ -110,18 +111,19 @@ def _unwrap_error(res_obj: dict[str, Any]) -> CloudError:
     inner = detail.get("error")
     hint = None
     if inner == 96013:
-        hint = "授权码无效或已被用过，重新执行 `mi auth login`"
+        hint = t("授权码无效或已被用过，重新执行 `mi auth login`")
     elif inner == 96002:
         hint = (
-            "换 token 的参数和授权时不一致（redirect_uri / client_id / "
-            "device_id 三者必须完全相同），用 -v 看实际发出的请求"
+            t(
+                "换 token 的参数和授权时不一致（redirect_uri / client_id / device_id 三者必须完全相同），用 -v 看实际发出的请求",
+            )
         )
     elif code == 401 or inner == 401:
-        hint = "凭据已失效，重新执行 `mi auth login`"
-    text = f"获取 token 失败（code={code}"
+        hint = t("凭据已失效，重新执行 `mi auth login`")
+    text = t("获取 token 失败（code={code}", code=code)
     if inner is not None:
         text += f", error={inner}"
-    text += f"）：{description}"
+    text += t("）：{description}", description=description)
     return CloudError(text, code=code, description=str(description), hint=hint)
 
 
@@ -168,16 +170,16 @@ class OAuthClient:
                 headers={"content-type": "application/x-www-form-urlencoded"},
             )
         except httpx.HTTPError as err:
-            raise NetworkError(f"连接 {url} 失败：{err}") from err
+            raise NetworkError(t("连接 {url} 失败：{err}", url=url, err=err)) from err
         if response.status_code == 401:
             raise CloudError(
-                "获取 token 失败：未授权（401）",
+                t("获取 token 失败：未授权（401）"),
                 code=401,
-                hint="重新执行 `mi auth login`",
+                hint=t("重新执行 `mi auth login`"),
             )
         if response.status_code != 200:
             raise CloudError(
-                f"获取 token 失败：HTTP {response.status_code}",
+                t("获取 token 失败：HTTP {status_code}", status_code=response.status_code),
                 code=response.status_code,
             )
         if self._trace:
@@ -185,7 +187,7 @@ class OAuthClient:
         try:
             res_obj = response.json()
         except ValueError as err:
-            raise CloudError(f"响应不是合法 JSON：{response.text[:200]}") from err
+            raise CloudError(t("响应不是合法 JSON：{v0}", v0=response.text[:200])) from err
         if res_obj.get("code") != 0 or "result" not in res_obj:
             raise _unwrap_error(res_obj)
         result = res_obj["result"]
@@ -195,7 +197,7 @@ class OAuthClient:
             if key not in result
         ]
         if missing:
-            raise CloudError(f"响应缺少字段：{', '.join(missing)}")
+            raise CloudError(t("响应缺少字段：{v0}", v0=', '.join(missing)))
         return TokenResult(
             access_token=result["access_token"],
             refresh_token=result["refresh_token"],
@@ -230,14 +232,14 @@ class OAuthClient:
                 params={"clientId": const.CLIENT_ID, "token": access_token},
             )
         except httpx.HTTPError as err:
-            raise NetworkError(f"获取账号信息失败：{err}") from err
+            raise NetworkError(t("获取账号信息失败：{err}", err=err)) from err
         try:
             res_obj = response.json()
         except ValueError as err:
-            raise CloudError("账号信息响应不是合法 JSON") from err
+            raise CloudError(t("账号信息响应不是合法 JSON")) from err
         if res_obj.get("code") != 0 or "data" not in res_obj:
             raise CloudError(
-                f"获取账号信息失败：{res_obj.get('description') or res_obj}",
+                t("获取账号信息失败：{v0}", v0=res_obj.get('description') or res_obj),
                 code=res_obj.get("code"),
             )
         return res_obj["data"]

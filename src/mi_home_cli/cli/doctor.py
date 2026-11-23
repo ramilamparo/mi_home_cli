@@ -10,6 +10,7 @@ from typing import Any
 import httpx
 import typer
 
+from ..i18n import t
 from .. import render
 from ..render import OutputFormat
 from ..core import const
@@ -42,7 +43,7 @@ def _check_broker(host: str, port: int, timeout: float) -> tuple[str, str]:
     try:
         addresses = sorted({item[4][0] for item in socket.getaddrinfo(host, port)})
     except socket.gaierror as err:
-        return FAIL, f"域名解析失败：{err}"
+        return FAIL, t("域名解析失败：{err}", err=err)
     fake = [ip for ip in addresses if ip.startswith(_FAKE_IP_PREFIXES)]
 
     started = time.time()
@@ -56,7 +57,7 @@ def _check_broker(host: str, port: int, timeout: float) -> tuple[str, str]:
                 try:
                     with context.wrap_socket(raw, server_hostname=host):
                         pass
-                    note = "（用 certifi 的证书库）" if index else ""
+                    note = t("（用 certifi 的证书库）") if index else ""
                     break
                 except ssl.SSLCertVerificationError as err:
                     verify_error = err
@@ -69,23 +70,26 @@ def _check_broker(host: str, port: int, timeout: float) -> tuple[str, str]:
                     except OSError:
                         break
                 except ssl.SSLError as err:
-                    return FAIL, f"TLS 握手失败：{err}"
+                    return FAIL, t("TLS 握手失败：{err}", err=err)
             else:
                 detail = (
-                    f"TCP 通（{elapsed:.0f}ms）但证书校验失败："
-                    f"{verify_error.verify_message or verify_error}"
+                    t(
+                        "TCP 通（{elapsed:.0f}ms）但证书校验失败：{v0}",
+                        elapsed=elapsed,
+                        v0=verify_error.verify_message or verify_error,
+                    )
                 )
                 if fake:
-                    detail += f"；域名解析到 {fake[0]}，是代理的 fake-IP，给它加条直连规则"
+                    detail += t("；域名解析到 {v0}，是代理的 fake-IP，给它加条直连规则", v0=fake[0])
                 return FAIL, detail
     except socket.timeout:
-        return FAIL, "连接超时，出口多半封了这个端口（mi watch 会用不了）"
+        return FAIL, t("连接超时，出口多半封了这个端口（mi watch 会用不了）")
     except OSError as err:
         return FAIL, f"{type(err).__name__}: {err}"
 
-    detail = f"TCP + TLS 均可（{elapsed:.0f}ms）{note}"
+    detail = t("TCP + TLS 均可（{elapsed:.0f}ms）{note}", elapsed=elapsed, note=note)
     if fake:
-        detail += f"；注意解析到 {fake[0]}，流量经过代理"
+        detail += t("；注意解析到 {v0}，流量经过代理", v0=fake[0])
     return OK, detail
 
 
@@ -97,13 +101,13 @@ def _check_clock(timeout: float) -> tuple[str, str]:
         )
         server_date = response.headers.get("date")
         if not server_date:
-            return WARN, "响应里没有 Date 头"
+            return WARN, t("响应里没有 Date 头")
         skew = time.time() - parsedate_to_datetime(server_date).timestamp()
     except (httpx.HTTPError, ValueError, TypeError) as err:
-        return WARN, f"无法判断：{err}"
+        return WARN, t("无法判断：{err}", err=err)
     if abs(skew) > 300:
-        return FAIL, f"本机时钟与服务端相差 {skew:.0f} 秒"
-    return OK, f"偏差 {skew:.0f} 秒"
+        return FAIL, t("本机时钟与服务端相差 {skew:.0f} 秒", skew=skew)
+    return OK, t("偏差 {skew:.0f} 秒", skew=skew)
 
 
 def run(ctx: typer.Context, output=None) -> None:
@@ -119,56 +123,65 @@ def run(ctx: typer.Context, output=None) -> None:
     if profile.auth_path.exists():
         private = file_is_private(profile.auth_path)
         add(
-            "凭据文件权限",
+            t("凭据文件权限"),
             OK if private else FAIL,
-            str(profile.auth_path) + ("" if private else "，其他用户可读，建议 chmod 600"),
+            str(profile.auth_path) + ("" if private else t("，其他用户可读，建议 chmod 600")),
         )
     else:
-        add("凭据文件", WARN, f"未登录（{profile.auth_path} 不存在）")
+        add(t("凭据文件"), WARN, t("未登录（{auth_path} 不存在）", auth_path=profile.auth_path))
 
     # 2. 登录态
     auth = profile.read_auth()
     if auth:
         left = auth.expires_at - time.time()
         add(
-            "登录态",
+            t("登录态"),
             OK if left > 0 else FAIL,
-            f"{auth.nickname or '?'} / {auth.region} / 剩余 {max(int(left), 0)} 秒",
+            t(
+                "{v0} / {region} / 剩余 {v1} 秒",
+                v0=auth.nickname or '?',
+                region=auth.region,
+                v1=max(int(left), 0),
+            ),
         )
 
     # 3. 回调链路：端口 + 域名解析
     free = port_available(const.REDIRECT_PORT)
     add(
-        f"{const.REDIRECT_PORT} 端口",
+        t("{REDIRECT_PORT} 端口", REDIRECT_PORT=const.REDIRECT_PORT),
         OK if free else WARN,
-        "可用" if free else "被占用，登录只能用粘贴方式",
+        t("可用") if free else t("被占用，登录只能用粘贴方式"),
     )
     resolved = resolve_redirect_host()
     mine = set(local_ips())
     if not resolved:
         add(
-            f"{const.REDIRECT_HOST} 解析",
+            t("{REDIRECT_HOST} 解析", REDIRECT_HOST=const.REDIRECT_HOST),
             WARN,
-            "解析不到；登录时会尝试 mDNS，不行就用粘贴方式",
+            t("解析不到；登录时会尝试 mDNS，不行就用粘贴方式"),
         )
     elif set(resolved) & mine:
-        add(f"{const.REDIRECT_HOST} 解析", OK, f"指向本机（{', '.join(resolved)}）")
+        add(
+            t("{REDIRECT_HOST} 解析", REDIRECT_HOST=const.REDIRECT_HOST),
+            OK,
+            t("指向本机（{v0}）", v0=', '.join(resolved)),
+        )
     else:
         add(
-            f"{const.REDIRECT_HOST} 解析",
+            t("{REDIRECT_HOST} 解析", REDIRECT_HOST=const.REDIRECT_HOST),
             WARN,
-            f"指向 {', '.join(resolved)}，不是本机，回调会落到那台机器",
+            t("指向 {v0}，不是本机，回调会落到那台机器", v0=', '.join(resolved)),
         )
 
     try:
         import zeroconf  # noqa: F401
 
-        add("zeroconf", OK, "已安装，可自动广播 mDNS")
+        add("zeroconf", OK, t("已安装，可自动广播 mDNS"))
     except ImportError:
         add(
             "zeroconf",
             WARN,
-            "未安装，装了可提高自动回调成功率：uv sync --extra mdns",
+            t("未安装，装了可提高自动回调成功率：uv sync --extra mdns"),
         )
 
     # 4. 网络连通性
@@ -187,7 +200,7 @@ def run(ctx: typer.Context, output=None) -> None:
 
     # 6. 时钟
     status, detail = _check_clock(timeout)
-    add("系统时钟", status, detail)
+    add(t("系统时钟"), status, detail)
 
     fmt = pick_output(app_ctx, output)
     display = rows

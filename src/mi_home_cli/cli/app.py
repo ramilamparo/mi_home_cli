@@ -7,6 +7,7 @@ from typing import Annotated, Optional
 
 import typer
 
+from ..i18n import localize_typer, t
 from .. import __version__, render
 from ..core import const
 from ..errors import MiCliError
@@ -24,7 +25,7 @@ from . import doctor as doctor_cli
 from .context import AppContext, OutputOption, default_profile_name
 
 app = typer.Typer(
-    help="命令行控制米家设备",
+    help=t("命令行控制米家设备"),
     no_args_is_help=True,
     context_settings={"help_option_names": ["-h", "--help"]},
 )
@@ -56,43 +57,43 @@ def main_callback(
     ctx: typer.Context,
     profile: Annotated[
         Optional[str],
-        typer.Option("--profile", "-p", envvar="MI_PROFILE", help="使用哪个 profile"),
+        typer.Option("--profile", "-p", envvar="MI_PROFILE", help=t("使用哪个 profile")),
     ] = None,
     region: Annotated[
         Optional[str],
         typer.Option(
             "--region", "-r", envvar="MI_REGION",
-            help="区域：" + "/".join(const.CLOUD_SERVERS),
+            help=t("区域：") + "/".join(const.CLOUD_SERVERS),
         ),
     ] = None,
     output: Annotated[
         Optional[OutputFormat],
-        typer.Option("--output", "-o", envvar="MI_OUTPUT", help="输出格式"),
+        typer.Option("--output", "-o", envvar="MI_OUTPUT", help=t("输出格式")),
     ] = None,
     timeout: Annotated[
-        float, typer.Option("--timeout", help="单次请求超时（秒）")
+        float, typer.Option("--timeout", help=t("单次请求超时（秒）"))
     ] = float(const.HTTP_TIMEOUT),
     verbose: Annotated[bool, typer.Option("--verbose", "-v")] = False,
     quiet: Annotated[bool, typer.Option("--quiet", "-q")] = False,
     dry_run: Annotated[
-        bool, typer.Option("--dry-run", help="只解析和校验，不真的下发")
+        bool, typer.Option("--dry-run", help=t("只解析和校验，不真的下发"))
     ] = False,
     channel: Annotated[
         Optional[str],
         typer.Option(
             "--channel",
             envvar="MI_CHANNEL",
-            help="控制通道：cloud（默认）/ auto（局域网优先，回落云端）/ lan",
+            help=t("控制通道：cloud（默认）/ auto（局域网优先，回落云端）/ lan"),
         ),
     ] = None,
     all_homes: Annotated[
-        bool, typer.Option("--all-homes", help="忽略默认家庭，跨所有家庭操作")
+        bool, typer.Option("--all-homes", help=t("忽略默认家庭，跨所有家庭操作"))
     ] = False,
     verify: Annotated[
         bool,
         typer.Option(
             "--verify/--no-verify",
-            help="写入后回读确认真实状态（默认不回读，省一次请求）",
+            help=t("写入后回读确认真实状态（默认不回读，省一次请求）"),
         ),
     ] = False,
 ) -> None:
@@ -125,16 +126,20 @@ def doctor(ctx: typer.Context, output: OutputOption = None) -> None:
     doctor_cli.run(ctx, output)
 
 
+# 命令的 help 来自 docstring，全部注册完之后统一换成当前语言
+localize_typer(app)
+
+
 def main() -> None:
     try:
         app()
     except MiCliError as err:
         render.error(err.message)
         if err.hint:
-            render.info(f"[dim]提示：{err.hint}[/dim]")
+            render.info(t("[dim]提示：{hint}[/dim]", hint=err.hint))
         sys.exit(err.exit_code)
     except KeyboardInterrupt:
-        render.info("\n已取消")
+        render.info(t("\n已取消"))
         sys.exit(130)
 
 

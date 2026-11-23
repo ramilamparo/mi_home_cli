@@ -330,6 +330,12 @@ Global options go before the subcommand (`-o` may also follow the subcommand):
 Environment variables `MI_PROFILE` / `MI_REGION` / `MI_OUTPUT` / `MI_CHANNEL` /
 `MI_SCAN_DEVICE_NAME` are also supported.
 
+The interface language (Chinese / English) is picked in this order: the `MI_LANG`
+environment variable (`zh` / `en`) → `mi config set lang en` → the system locale
+(`LC_ALL` > `LC_MESSAGES` > `LANG`; `zh*` means Chinese, anything else English).
+Column names that are Chinese in `-o json/yaml` output follow the language (`检查项`
+becomes `Check` in English), so pin `MI_LANG` in scripts that need stable keys.
+
 ```bash
 mi -o plain get lamp brightness        # prints just "60", drop it straight into $(...)
 mi -o json device list | jq '.[] | select(.online)'

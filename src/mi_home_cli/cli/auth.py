@@ -11,6 +11,7 @@ from typing import Annotated, Optional
 
 import typer
 
+from ..i18n import t
 from .. import render
 from ..core import const
 from ..core.callback import (
@@ -29,8 +30,8 @@ from ..render import OutputFormat, mask
 from ..store import Profile, config_dir, list_profiles, read_config, write_config
 from .context import AppContext, OutputOption, pick_output
 
-app = typer.Typer(help="登录与凭据管理", no_args_is_help=True)
-profile_app = typer.Typer(help="多账号/多区域配置", no_args_is_help=True)
+app = typer.Typer(help=t("登录与凭据管理"), no_args_is_help=True)
+profile_app = typer.Typer(help=t("多账号/多区域配置"), no_args_is_help=True)
 
 
 def _ctx(ctx: typer.Context) -> AppContext:
@@ -40,15 +41,15 @@ def _ctx(ctx: typer.Context) -> AppContext:
 def _fmt_duration(seconds: float) -> str:
     seconds = int(seconds)
     if seconds < 0:
-        return "已过期"
+        return t("已过期")
     days, rem = divmod(seconds, 86400)
     hours, rem = divmod(rem, 3600)
     minutes = rem // 60
     if days:
-        return f"{days} 天 {hours} 小时"
+        return t("{days} 天 {hours} 小时", days=days, hours=hours)
     if hours:
-        return f"{hours} 小时 {minutes} 分"
-    return f"{minutes} 分"
+        return t("{hours} 小时 {minutes} 分", hours=hours, minutes=minutes)
+    return t("{minutes} 分", minutes=minutes)
 
 
 _STDIN_EOF = "__stdin_eof__"
@@ -80,7 +81,7 @@ def _collect_code(
                 return
             except MiCliError as err:
                 render.error(err.message)
-                render.info("再试一次，或按 Ctrl-C 退出：")
+                render.info(t("再试一次，或按 Ctrl-C 退出："))
 
     threading.Thread(target=read_stdin, name="mi-paste", daemon=True).start()
 
@@ -90,8 +91,8 @@ def _collect_code(
         if remaining <= 0:
             stop.set()
             raise MiCliError(
-                f"等待授权超时（{int(wait_seconds)} 秒）",
-                hint="用 `mi auth login --manual` 手工粘贴回调地址",
+                t("等待授权超时（{v0} 秒）", v0=int(wait_seconds)),
+                hint=t("用 `mi auth login --manual` 手工粘贴回调地址"),
             )
         try:
             item = result_queue.get(timeout=min(1.0, remaining))
@@ -101,8 +102,7 @@ def _collect_code(
             if server is None:
                 stop.set()
                 raise UsageError(
-                    "标准输入已结束，也没有本地回调可用；"
-                    "请在交互式终端里运行，或用管道传入回调地址"
+                    t("标准输入已结束，也没有本地回调可用；请在交互式终端里运行，或用管道传入回调地址")
                 )
             # 还有本地回调这条路，继续等。
             continue
@@ -112,13 +112,13 @@ def _collect_code(
             # 本地回调一定带 state，不匹配就是别人打过来的请求，直接拒。
             if result.state != expected_state:
                 raise MiCliError(
-                    "回调的 state 与本次登录不符，已忽略",
-                    hint="请重新执行 `mi auth login`",
+                    t("回调的 state 与本次登录不符，已忽略"),
+                    hint=t("请重新执行 `mi auth login`"),
                 )
         elif result.state and result.state != expected_state:
-            raise MiCliError("state 不匹配，可能不是本次登录的回调，请重新登录")
+            raise MiCliError(t("state 不匹配，可能不是本次登录的回调，请重新登录"))
         elif not result.state:
-            render.warn("粘贴的内容里没有 state，跳过校验")
+            render.warn(t("粘贴的内容里没有 state，跳过校验"))
         return result
 
 
@@ -126,38 +126,38 @@ def _collect_code(
 def login(
     ctx: typer.Context,
     region: Annotated[
-        Optional[str], typer.Option("--region", "-r", help="区域：" + "/".join(const.CLOUD_SERVERS))
+        Optional[str], typer.Option("--region", "-r", help=t("区域：") + "/".join(const.CLOUD_SERVERS))
     ] = None,
     scan: Annotated[
         bool,
         typer.Option(
-            "--scan", help="用小米账号扫码登录（终端显示二维码，无需浏览器）"
+            "--scan", help=t("用小米账号扫码登录（终端显示二维码，无需浏览器）")
         ),
     ] = False,
     manual: Annotated[
-        bool, typer.Option("--manual", help="不监听端口，只手工粘贴回调地址")
+        bool, typer.Option("--manual", help=t("不监听端口，只手工粘贴回调地址"))
     ] = False,
     no_browser: Annotated[
-        bool, typer.Option("--no-browser", help="不自动打开浏览器")
+        bool, typer.Option("--no-browser", help=t("不自动打开浏览器"))
     ] = False,
     no_mdns: Annotated[
-        bool, typer.Option("--no-mdns", help="不广播 mDNS")
+        bool, typer.Option("--no-mdns", help=t("不广播 mDNS"))
     ] = False,
     redirect_url: Annotated[
         Optional[str],
         typer.Option(
             "--redirect-url",
-            help="自定义 redirect_uri（host 必须是 homeassistant.local:8123）",
+            help=t("自定义 redirect_uri（host 必须是 homeassistant.local:8123）"),
         ),
     ] = None,
     device_id: Annotated[
-        Optional[str], typer.Option("--device-id", help="自定义 device_id（排查用）")
+        Optional[str], typer.Option("--device-id", help=t("自定义 device_id（排查用）"))
     ] = None,
     wait: Annotated[
-        float, typer.Option("--wait", help="等待授权的秒数")
+        float, typer.Option("--wait", help=t("等待授权的秒数"))
     ] = 300.0,
     skip_confirm: Annotated[
-        bool, typer.Option("--skip-confirm", help="已授权过则跳过确认页")
+        bool, typer.Option("--skip-confirm", help=t("已授权过则跳过确认页"))
     ] = False,
 ) -> None:
     """用小米账号登录。"""
@@ -165,7 +165,7 @@ def login(
     region = region or app_ctx.resolved_region()
     if region not in const.CLOUD_SERVERS:
         raise UsageError(
-            f"未知区域 `{region}`，可选：{'、'.join(const.CLOUD_SERVERS)}"
+            t("未知区域 `{region}`，可选：{v0}", region=region, v0=t('、').join(const.CLOUD_SERVERS))
         )
 
     profile = app_ctx.profile
@@ -173,8 +173,11 @@ def login(
     redirect = redirect_url or identity.redirect_url
     if not redirect.startswith(const.REDIRECT_ORIGIN):
         render.warn(
-            f"redirect_uri 的 host 不是 {const.REDIRECT_HOST}:{const.REDIRECT_PORT}，"
-            "小米服务端会拒绝（invalid redirect uri）"
+            t(
+                "redirect_uri 的 host 不是 {REDIRECT_HOST}:{REDIRECT_PORT}，小米服务端会拒绝（invalid redirect uri）",
+                REDIRECT_HOST=const.REDIRECT_HOST,
+                REDIRECT_PORT=const.REDIRECT_PORT,
+            )
         )
     device_id = device_id or identity.device_id
     # state 用 HA 的算法，纯粹是为了少一个和上游不一致的变量。
@@ -217,26 +220,28 @@ def login(
 
     try:
         render.info("")
-        render.info("[bold]1.[/bold] 在浏览器里打开下面的链接，用小米账号登录并授权：")
+        render.info(t("[bold]1.[/bold] 在浏览器里打开下面的链接，用小米账号登录并授权："))
         render.raw(auth_url)
         if not no_browser and not _open_browser(auth_url):
-            render.warn("没能自动打开浏览器，请手工复制上面的链接")
+            render.warn(t("没能自动打开浏览器，请手工复制上面的链接"))
         if server:
             render.info(
-                f"[bold]2.[/bold] 授权后浏览器会跳回 {redirect}，"
-                "本机已在 8123 端口等着接收。"
+                t(
+                    "[bold]2.[/bold] 授权后浏览器会跳回 {redirect}，本机已在 8123 端口等着接收。",
+                    redirect=redirect,
+                )
             )
             render.info(
-                "[bold]3.[/bold] 如果那个页面打不开（说明 homeassistant.local "
-                "没指向本机），把浏览器地址栏里的整段地址粘到这里回车："
+                t(
+                    "[bold]3.[/bold] 如果那个页面打不开（说明 homeassistant.local 没指向本机），把浏览器地址栏里的整段地址粘到这里回车：",
+                )
             )
         else:
             render.info(
-                f"[bold]2.[/bold] 授权后浏览器会跳到 {redirect}，"
-                "这个地址多半打不开——没关系，"
+                t("[bold]2.[/bold] 授权后浏览器会跳到 {redirect}，这个地址多半打不开——没关系，", redirect=redirect)
             )
             render.info(
-                "[bold]3.[/bold] 直接把浏览器地址栏里的整段地址粘到这里回车："
+                t("[bold]3.[/bold] 直接把浏览器地址栏里的整段地址粘到这里回车：")
             )
         render.info("")
 
@@ -255,8 +260,10 @@ def login(
             mdns.close()
 
     render.info(
-        f"拿到授权码（来自{'本地回调' if result.source == 'server' else '粘贴'}），"
-        "正在换取 token…"
+        t(
+            "拿到授权码（来自{v0}），正在换取 token…",
+            v0=t('本地回调') if result.source == 'server' else t('粘贴'),
+        )
     )
     try:
         _exchange_and_save(
@@ -270,8 +277,8 @@ def login(
         # 换 token 失败时授权码通常还没被消耗，别让用户白跑一遍浏览器。
         render.error(err.message)
         if err.hint:
-            render.info(f"[dim]提示：{err.hint}[/dim]")
-        render.info("授权码还在有效期内的话可以直接重试：")
+            render.info(t("[dim]提示：{hint}[/dim]", hint=err.hint))
+        render.info(t("授权码还在有效期内的话可以直接重试："))
         render.raw(f"  mi -v auth exchange {result.code}")
         raise typer.Exit(code=err.exit_code) from err
 
@@ -296,17 +303,22 @@ def _exchange_and_save(
             auth.uid = str(info.get("userId") or "") or None
             auth.nickname = info.get("miliaoNick") or info.get("nickname")
         except MiCliError as err:
-            render.warn(f"账号信息获取失败（不影响登录）：{err.message}")
+            render.warn(t("账号信息获取失败（不影响登录）：{message}", message=err.message))
 
     profile.write_auth(auth)
     profile.clear_pending()
     render.success(
-        f"登录成功：{auth.nickname or '未知昵称'}"
-        f"（uid {auth.uid or '未知'}，区域 {region}，profile {profile.name}）"
+        t(
+            "登录成功：{v0}（uid {v1}，区域 {region}，profile {name}）",
+            v0=auth.nickname or t('未知昵称'),
+            v1=auth.uid or t('未知'),
+            region=region,
+            name=profile.name,
+        )
     )
-    render.info(f"凭据已保存到 {profile.auth_path}（权限 0600）")
+    render.info(t("凭据已保存到 {auth_path}（权限 0600）", auth_path=profile.auth_path))
     render.info(
-        f"有效期约 {_fmt_duration(auth.expires_at - time.time())}，到期前会自动续期"
+        t("有效期约 {v0}，到期前会自动续期", v0=_fmt_duration(auth.expires_at - time.time()))
     )
 
 
@@ -329,7 +341,7 @@ def _scan_user_agent(app_ctx: AppContext) -> str:
     except UnicodeEncodeError:
         # HTTP 头只能 Latin-1，带不了中文；回退默认，别让登录直接崩。
         render.warn(
-            f"scan_device_name `{name}` 含非 ASCII 字符，无法作为设备名，已用默认名"
+            t("scan_device_name `{name}` 含非 ASCII 字符，无法作为设备名，已用默认名", name=name)
         )
         return const.WEB_USER_AGENT
     return name
@@ -373,7 +385,7 @@ def _scan_login(
         except MiCliError as err:
             render.error(err.message)
             if err.hint:
-                render.info(f"[dim]提示：{err.hint}[/dim]")
+                render.info(t("[dim]提示：{hint}[/dim]", hint=err.hint))
             # 非交互（管道里）或重试次数用尽：只打印手动授权引导，然后退出。
             if not render.is_tty() or attempt >= _SCAN_MAX_ATTEMPTS:
                 _scan_guide_manual(
@@ -393,7 +405,7 @@ def _scan_login(
                     code=pasted.code,
                 )
                 return
-            render.info("好，重新生成扫码二维码…")
+            render.info(t("好，重新生成扫码二维码…"))
 
 
 def _scan_capture_code(
@@ -407,7 +419,7 @@ def _scan_capture_code(
 ) -> CallbackResult:
     """走一次扫码：显示二维码 → 等手机确认 → 从跳转链取出 code。"""
     render.info("")
-    render.info("[bold]正在获取二维码…[/bold]")
+    render.info(t("[bold]正在获取二维码…[/bold]"))
     with QrLoginClient(
         redirect_url=redirect,
         device_id=device_id,
@@ -429,37 +441,34 @@ def _scan_capture_code(
             # 半块二维码若有横纹/发虚，通常是终端「行距(line spacing)」留了缝，
             # 调到 1.0 即为实心；实在不行用下面的图片链接，一样扫。
             render.info(
-                "[dim]二维码有横纹或发虚？把终端行距（line spacing）调到 1.0 就实心了；"
-                "或直接用下面的图片链接。[/dim]"
+                t("[dim]二维码有横纹或发虚？把终端行距（line spacing）调到 1.0 就实心了；或直接用下面的图片链接。[/dim]")
             )
         else:
-            render.warn("无法在终端里渲染二维码，请改用下面的图片链接扫码。")
+            render.warn(t("无法在终端里渲染二维码，请改用下面的图片链接扫码。"))
         render.info("")
         render.info(
-            "[bold]用小米 App 扫码：[/bold]我的 → 点右上角扫一扫（或设置 → 小米账号），"
-            "扫码后在手机上点「确认登录」。"
+            t("[bold]用小米 App 扫码：[/bold]我的 → 点右上角扫一扫（或设置 → 小米账号），扫码后在手机上点「确认登录」。")
         )
         render.info(
-            "[dim]首次登录还会弹一个授权页，点「同意并关联 / Agree and link」授权即可"
-            "（以后再扫就免了）；点完这里会自动继续。[/dim]"
+            t("[dim]首次登录还会弹一个授权页，点「同意并关联 / Agree and link」授权即可（以后再扫就免了）；点完这里会自动继续。[/dim]")
         )
         # 终端渲染受字体/行距影响不一定扫得出，始终附上图片链接兜底，别让人卡死。
         if challenge.qr_image_url:
             render.info(
-                "[dim]终端里的二维码扫不出？用浏览器打开这个地址看图再扫：[/dim]"
+                t("[dim]终端里的二维码扫不出？用浏览器打开这个地址看图再扫：[/dim]")
             )
             render.raw(challenge.qr_image_url)
         render.info(
-            "[dim]也可以把下面这段地址自行转成二维码后扫：[/dim]"
+            t("[dim]也可以把下面这段地址自行转成二维码后扫：[/dim]")
         )
         render.raw(challenge.login_url)
         render.info(
-            f"[dim]二维码有效期约 {int(challenge.timeout)} 秒，正在等待确认…[/dim]"
+            t("[dim]二维码有效期约 {v0} 秒，正在等待确认…[/dim]", v0=int(challenge.timeout))
         )
 
         deadline = time.monotonic() + min(wait, float(challenge.timeout))
         location = client.poll(challenge, deadline=deadline)
-        render.info("扫码已确认，正在换取 token…")
+        render.info(t("扫码已确认，正在换取 token…"))
         return client.resolve_code(location)
 
 
@@ -476,23 +485,22 @@ def _scan_guide_manual(
         redirect_url=redirect, device_id=device_id, state=state, skip_confirm=False
     )
     render.info("")
-    render.warn("没能自动完成扫码授权（首次登录往往要手动点一次「同意并关联」）。")
-    render.info("用浏览器打开下面这个地址，登录小米账号并点「同意并关联」完成授权：")
+    render.warn(t("没能自动完成扫码授权（首次登录往往要手动点一次「同意并关联」）。"))
+    render.info(t("用浏览器打开下面这个地址，登录小米账号并点「同意并关联」完成授权："))
     render.raw(auth_url)
     qr = render_qr(auth_url)
     if qr:
-        render.info("[dim]或用手机扫这个二维码打开上面的页面：[/dim]")
+        render.info(t("[dim]或用手机扫这个二维码打开上面的页面：[/dim]"))
         render.raw(qr)
 
     if not prompt:
         render.info("")
-        render.info("授权完成后，重新运行 `mi auth login --scan` 即可（这次不用再授权）。")
+        render.info(t("授权完成后，重新运行 `mi auth login --scan` 即可（这次不用再授权）。"))
         return None
 
     render.info("")
     render.info(
-        "完成后二选一：把浏览器跳转后地址栏里的整段地址粘到这里回车立刻换 token，"
-        "或直接回车让我重新生成扫码二维码（Ctrl-C 取消）："
+        t("完成后二选一：把浏览器跳转后地址栏里的整段地址粘到这里回车立刻换 token，或直接回车让我重新生成扫码二维码（Ctrl-C 取消）：")
     )
     while True:
         try:
@@ -508,14 +516,14 @@ def _scan_guide_manual(
             return parse_pasted(line, expected_state=state)
         except MiCliError as err:
             render.error(err.message)
-            render.info("再粘一次，或直接回车重新扫码：")
+            render.info(t("再粘一次，或直接回车重新扫码："))
 
 
 @app.command()
 def exchange(
     ctx: typer.Context,
     code_or_url: Annotated[
-        str, typer.Argument(help="授权码，或浏览器回调地址（整段粘贴）")
+        str, typer.Argument(help=t("授权码，或浏览器回调地址（整段粘贴）"))
     ],
 ) -> None:
     """用授权码换 token。
@@ -528,12 +536,12 @@ def exchange(
     pending = profile.read_pending()
     if not pending:
         raise UsageError(
-            "没有找到上一次登录的记录，先执行 `mi auth login`",
+            t("没有找到上一次登录的记录，先执行 `mi auth login`"),
         )
     result = parse_pasted(code_or_url, expected_state=pending.get("state"))
     age = int(time.time()) - int(pending.get("created_at", 0))
     if age > 600:
-        render.warn(f"上一次登录是 {age // 60} 分钟前发起的，授权码可能已过期")
+        render.warn(t("上一次登录是 {v0} 分钟前发起的，授权码可能已过期", v0=age // 60))
     _exchange_and_save(
         app_ctx,
         region=pending["region"],
@@ -569,8 +577,10 @@ def _try_auto_capture(
     """尽力让 homeassistant.local:8123 落到本机。失败就静默回退到粘贴。"""
     if not port_available(const.REDIRECT_PORT):
         render.warn(
-            f"{const.REDIRECT_PORT} 端口被占用（本机在跑 Home Assistant？），"
-            "只能用粘贴方式登录"
+            t(
+                "{REDIRECT_PORT} 端口被占用（本机在跑 Home Assistant？），只能用粘贴方式登录",
+                REDIRECT_PORT=const.REDIRECT_PORT,
+            )
         )
         return None, None
 
@@ -578,7 +588,13 @@ def _try_auto_capture(
     try:
         server = CallbackServer(result_queue=result_queue)
     except OSError as err:
-        render.warn(f"监听 {const.REDIRECT_PORT} 失败：{err}")
+        render.warn(
+            t(
+                "监听 {REDIRECT_PORT} 失败：{err}",
+                REDIRECT_PORT=const.REDIRECT_PORT,
+                err=err,
+            )
+        )
         return None, None
     server.start()
 
@@ -586,13 +602,20 @@ def _try_auto_capture(
     mine = set(local_ips())
     if resolved and set(resolved) & mine:
         render.info(
-            f"[dim]{const.REDIRECT_HOST} 已解析到本机（{', '.join(resolved)}）[/dim]"
+            t(
+                "[dim]{REDIRECT_HOST} 已解析到本机（{v0}）[/dim]",
+                REDIRECT_HOST=const.REDIRECT_HOST,
+                v0=', '.join(resolved),
+            )
         )
         return server, None
     if resolved:
         render.warn(
-            f"{const.REDIRECT_HOST} 解析到 {', '.join(resolved)}，不是本机；"
-            "回调会落到那台机器上"
+            t(
+                "{REDIRECT_HOST} 解析到 {v0}，不是本机；回调会落到那台机器上",
+                REDIRECT_HOST=const.REDIRECT_HOST,
+                v0=', '.join(resolved),
+            )
         )
         return server, None
 
@@ -602,9 +625,15 @@ def _try_auto_capture(
     publisher = MdnsPublisher(address)
     failure = publisher.start()
     if failure:
-        render.info(f"[dim]mDNS 不可用（{failure}），可以直接用粘贴方式[/dim]")
+        render.info(t("[dim]mDNS 不可用（{failure}），可以直接用粘贴方式[/dim]", failure=failure))
         return server, None
-    render.info(f"[dim]已通过 mDNS 把 {const.REDIRECT_HOST} 指向 {address}[/dim]")
+    render.info(
+        t(
+            "[dim]已通过 mDNS 把 {REDIRECT_HOST} 指向 {address}[/dim]",
+            REDIRECT_HOST=const.REDIRECT_HOST,
+            address=address,
+        )
+    )
     return server, publisher
 
 
@@ -612,7 +641,7 @@ def _try_auto_capture(
 def status(
     ctx: typer.Context,
     check: Annotated[
-        bool, typer.Option("--check", help="调用一次云端接口验证 token 是否真的有效")
+        bool, typer.Option("--check", help=t("调用一次云端接口验证 token 是否真的有效"))
     ] = False,
     output: OutputOption = None,
 ) -> None:
@@ -621,24 +650,28 @@ def status(
     profile = app_ctx.profile
     auth = profile.read_auth()
     if auth is None:
-        raise NotAuthenticated(f"profile `{profile.name}` 尚未登录")
+        raise NotAuthenticated(t("profile `{name}` 尚未登录", name=profile.name))
 
     now = time.time()
     data = {
         "profile": profile.name,
-        "region": f"{auth.region}（{const.CLOUD_SERVERS.get(auth.region, '未知')}）",
+        "region": t(
+            "{region}（{v0}）",
+            region=auth.region,
+            v0=const.CLOUD_SERVERS.get(auth.region, t('未知')),
+        ),
         "nickname": auth.nickname or "-",
         "uid": auth.uid or "-",
         "device_id": auth.device_id,
         "access_token": mask(auth.access_token),
         "expires_in": _fmt_duration(auth.expires_at - now),
-        "refresh_due": "是" if auth.needs_refresh else "否",
+        "refresh_due": t("是") if auth.needs_refresh else t("否"),
         "path": str(profile.auth_path),
     }
     if check:
         with app_ctx.session() as session:
             info = session.user_profile()
-            data["check"] = f"有效（{info.get('miliaoNick', '')}）"
+            data["check"] = t("有效（{v0}）", v0=info.get('miliaoNick', ''))
     render.output(data, pick_output(app_ctx, output))
 
 
@@ -649,7 +682,7 @@ def refresh(ctx: typer.Context) -> None:
     with app_ctx.session() as session:
         auth = session.refresh_token(force=True)
     render.success(
-        f"已刷新，有效期约 {_fmt_duration(auth.expires_at - time.time())}"
+        t("已刷新，有效期约 {v0}", v0=_fmt_duration(auth.expires_at - time.time()))
     )
 
 
@@ -675,24 +708,27 @@ def whoami(ctx: typer.Context, output: OutputOption = None) -> None:
 def logout(
     ctx: typer.Context,
     purge: Annotated[
-        bool, typer.Option("--purge", help="连同设备清单、spec 缓存一起删除")
+        bool, typer.Option("--purge", help=t("连同设备清单、spec 缓存一起删除"))
     ] = False,
-    yes: Annotated[bool, typer.Option("--yes", "-y", help="不询问")] = False,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help=t("不询问"))] = False,
 ) -> None:
     """退出登录，删除本地凭据。"""
     app_ctx = _ctx(ctx)
     profile = app_ctx.profile
     if not profile.exists():
-        render.info("本来就没有登录信息")
+        render.info(t("本来就没有登录信息"))
         return
     if not yes and render.is_tty():
-        target = "整个 profile 目录" if purge else "登录凭据"
-        typer.confirm(f"确认删除 {profile.name} 的{target}？", abort=True)
+        target = t("整个 profile 目录") if purge else t("登录凭据")
+        typer.confirm(
+            t("确认删除 {name} 的{target}？", name=profile.name, target=target),
+            abort=True,
+        )
     if purge:
         profile.purge()
     else:
         profile.clear_auth()
-    render.success(f"已清除 profile `{profile.name}` 的凭据")
+    render.success(t("已清除 profile `{name}` 的凭据", name=profile.name))
 
 
 @profile_app.command("list")
@@ -708,7 +744,7 @@ def profile_list(ctx: typer.Context, output: OutputOption = None) -> None:
                 "profile": name + (" *" if name == default else ""),
                 "region": auth.region if auth else "-",
                 "nickname": (auth.nickname if auth else None) or "-",
-                "已登录": "是" if auth else "否",
+                "已登录": t("是") if auth else t("否"),
             }
         )
     render.output(rows, pick_output(app_ctx, output))
@@ -721,24 +757,24 @@ def profile_use(ctx: typer.Context, name: str) -> None:
     config = read_config(app_ctx.root)
     config["profile"] = name
     write_config(config, app_ctx.root)
-    render.success(f"默认 profile 已设为 `{name}`")
+    render.success(t("默认 profile 已设为 `{name}`", name=name))
 
 
 @profile_app.command("remove")
 def profile_remove(
     ctx: typer.Context,
     name: str,
-    yes: Annotated[bool, typer.Option("--yes", "-y", help="不询问")] = False,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help=t("不询问"))] = False,
 ) -> None:
     """删除一个 profile 的全部本地数据。"""
     app_ctx = _ctx(ctx)
     profile = Profile(name, root=app_ctx.root)
     if not profile.path.exists():
-        raise UsageError(f"profile `{name}` 不存在")
+        raise UsageError(t("profile `{name}` 不存在", name=name))
     if not yes and render.is_tty():
-        typer.confirm(f"确认删除 profile `{name}` 的全部数据？", abort=True)
+        typer.confirm(t("确认删除 profile `{name}` 的全部数据？", name=name), abort=True)
     profile.purge()
-    render.success(f"已删除 profile `{name}`")
+    render.success(t("已删除 profile `{name}`", name=name))
 
 
 @profile_app.command("path")

@@ -9,6 +9,8 @@ from typing import Any, Sequence
 from rich.console import Console
 from rich.table import Table
 
+from .i18n import localize_keys, t
+
 console = Console()
 err_console = Console(stderr=True)
 
@@ -63,6 +65,10 @@ def output(
     title: str | None = None,
 ) -> None:
     """按格式输出。table 只对 list[dict] 和 dict 有意义。"""
+    # 命令里的行一律以中文列名为键，这里统一换成当前语言（中文环境下原样不动）
+    data = localize_keys(data)
+    if columns is not None:
+        columns = [t(col) for col in columns]
     if fmt is OutputFormat.json:
         console.print_json(json.dumps(data, ensure_ascii=False, default=str))
         return
@@ -102,7 +108,7 @@ def _print_table(
         return
     if isinstance(data, list):
         if not data:
-            console.print("[dim]（空）[/dim]")
+            console.print(t("[dim]（空）[/dim]"))
             return
         if not isinstance(data[0], dict):
             for item in data:

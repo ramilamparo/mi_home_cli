@@ -5,6 +5,8 @@
 """
 from __future__ import annotations
 
+from ..i18n import t
+
 # 米家给 Home Assistant 集成注册的 OAuth 客户端。
 CLIENT_ID = "2882303761520251711"
 
@@ -54,7 +56,7 @@ def redirect_url(webhook_id: str) -> str:
 DEFAULT_API_HOST = "ha.api.io.mi.com"
 
 CLOUD_SERVERS: dict[str, str] = {
-    "cn": "中国大陆",
+    "cn": t("中国大陆"),
     "de": "Europe",
     "i2": "India",
     "ru": "Russia",

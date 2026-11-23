@@ -20,6 +20,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+from ..i18n import t
 from ..errors import UsageError
 from . import const
 
@@ -52,10 +53,10 @@ class _Handler(BaseHTTPRequestHandler):
             self.result_queue.put(
                 CallbackResult(code=code, state=state, source="server")
             )
-            self._respond(200, "登录成功", "可以关闭这个页面，回到终端。")
+            self._respond(200, t("登录成功"), t("可以关闭这个页面，回到终端。"))
         else:
-            error = (params.get("error") or ["缺少 code 参数"])[0]
-            self._respond(400, "登录失败", str(error))
+            error = (params.get("error") or [t("缺少 code 参数")])[0]
+            self._respond(400, t("登录失败"), str(error))
 
     def _respond(self, status: int, title: str, body: str) -> None:
         payload = _PAGE.format(title=title, body=body).encode("utf-8")
@@ -153,7 +154,7 @@ class MdnsPublisher:
         try:
             from zeroconf import ServiceInfo, Zeroconf
         except ImportError:
-            return "未安装 zeroconf（uv sync --extra mdns）"
+            return t("未安装 zeroconf（uv sync --extra mdns）")
         try:
             self._zeroconf = Zeroconf()
             self._info = ServiceInfo(
@@ -166,7 +167,7 @@ class MdnsPublisher:
             self._zeroconf.register_service(self._info)
         except Exception as err:  # zeroconf 的异常类型比较杂
             self.close()
-            return f"注册 mDNS 失败：{err}"
+            return t("注册 mDNS 失败：{err}", err=err)
         return None
 
     def close(self) -> None:
@@ -194,7 +195,7 @@ def parse_pasted(text: str, *, expected_state: str | None = None) -> CallbackRes
     """
     text = text.strip().strip('"').strip("'")
     if not text:
-        raise UsageError("没有输入内容")
+        raise UsageError(t("没有输入内容"))
 
     query = ""
     if "://" in text:
@@ -211,15 +212,15 @@ def parse_pasted(text: str, *, expected_state: str | None = None) -> CallbackRes
         state = (params.get("state") or [None])[0]
         if not code:
             raise UsageError(
-                f"这段内容里没有 code 参数：{error or text[:80]}",
+                t("这段内容里没有 code 参数：{v0}", v0=error or text[:80]),
             )
     else:
         if any(char in text for char in " \t\n"):
-            raise UsageError("无法识别的内容，请粘贴完整的重定向 URL")
+            raise UsageError(t("无法识别的内容，请粘贴完整的重定向 URL"))
         code, state = text, None
 
     if expected_state and state and state != expected_state:
         raise UsageError(
-            "state 不匹配，这不是本次登录的回调；请重新执行 `mi auth login`"
+            t("state 不匹配，这不是本次登录的回调；请重新执行 `mi auth login`")
         )
     return CallbackResult(code=code, state=state, source="paste")

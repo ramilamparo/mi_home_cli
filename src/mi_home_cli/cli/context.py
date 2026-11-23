@@ -7,6 +7,7 @@ from typing import Annotated, Optional
 
 import typer
 
+from ..i18n import t
 from ..core import const
 from ..core.session import Session
 from ..render import OutputFormat
@@ -68,7 +69,7 @@ def default_profile_name(root: Path | None = None) -> str:
 # 而 `mi auth status -o json` 是更自然的写法，所以这里重复声明一次。
 OutputOption = Annotated[
     Optional[OutputFormat],
-    typer.Option("--output", "-o", envvar="MI_OUTPUT", help="输出格式"),
+    typer.Option("--output", "-o", envvar="MI_OUTPUT", help=t("输出格式")),
 ]
 
 
@@ -93,11 +94,11 @@ def pick_output(
 # （和任何 agent）都会自然写出的形式，只能放在子命令前面属于反直觉。
 DryRunOption = Annotated[
     Optional[bool],
-    typer.Option("--dry-run/--no-dry-run", help="只解析和校验，不真的下发"),
+    typer.Option("--dry-run/--no-dry-run", help=t("只解析和校验，不真的下发")),
 ]
 VerifyOption = Annotated[
     Optional[bool],
-    typer.Option("--verify/--no-verify", help="写入后回读确认真实状态"),
+    typer.Option("--verify/--no-verify", help=t("写入后回读确认真实状态")),
 ]
 
 

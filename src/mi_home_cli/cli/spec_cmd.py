@@ -7,14 +7,15 @@ from typing import Annotated, Optional
 
 import typer
 
+from ..i18n import t
 from .. import render
 from ..core.spec import DeviceSpec, SpecStore, unit_symbol
 from ..render import OutputFormat
 from .context import AppContext, OutputOption, pick_output
 from .device import resolve
 
-app = typer.Typer(help="设备能力（MIoT spec）", no_args_is_help=True)
-cache_app = typer.Typer(help="spec 缓存", no_args_is_help=True)
+app = typer.Typer(help=t("设备能力（MIoT spec）"), no_args_is_help=True)
+cache_app = typer.Typer(help=t("spec 缓存"), no_args_is_help=True)
 app.add_typer(cache_app, name="cache")
 
 
@@ -59,12 +60,12 @@ def _property_rows(spec: DeviceSpec) -> list[dict[str, object]]:
 @app.command("show")
 def spec_show(
     ctx: typer.Context,
-    target: Annotated[str, typer.Argument(help="设备名称、别名、did 或 urn")],
-    siid: Annotated[Optional[int], typer.Option("--siid", help="只看某个服务")] = None,
-    readable: Annotated[bool, typer.Option("--readable", help="只看可读属性")] = False,
-    writable: Annotated[bool, typer.Option("--writable", help="只看可写属性")] = False,
-    actions: Annotated[bool, typer.Option("--actions", help="改为列出动作")] = False,
-    refresh: Annotated[bool, typer.Option("--refresh", help="忽略缓存重新拉取")] = False,
+    target: Annotated[str, typer.Argument(help=t("设备名称、别名、did 或 urn"))],
+    siid: Annotated[Optional[int], typer.Option("--siid", help=t("只看某个服务"))] = None,
+    readable: Annotated[bool, typer.Option("--readable", help=t("只看可读属性"))] = False,
+    writable: Annotated[bool, typer.Option("--writable", help=t("只看可写属性"))] = False,
+    actions: Annotated[bool, typer.Option("--actions", help=t("改为列出动作"))] = False,
+    refresh: Annotated[bool, typer.Option("--refresh", help=t("忽略缓存重新拉取"))] = False,
     output: OutputOption = None,
 ) -> None:
     """列出设备的属性（或动作）。"""
@@ -111,8 +112,8 @@ def spec_show(
 @app.command("search")
 def spec_search(
     ctx: typer.Context,
-    target: Annotated[str, typer.Argument(help="设备名称、别名、did 或 urn")],
-    keyword: Annotated[str, typer.Argument(help="关键词，匹配名称和说明")],
+    target: Annotated[str, typer.Argument(help=t("设备名称、别名、did 或 urn"))],
+    keyword: Annotated[str, typer.Argument(help=t("关键词，匹配名称和说明"))],
     output: OutputOption = None,
 ) -> None:
     """在一台设备的属性和动作里搜关键词。"""
@@ -124,7 +125,7 @@ def spec_search(
         if needle in f"{prop.full_name} {prop.description}".lower():
             rows.append(
                 {
-                    "类型": "属性",
+                    "类型": t("属性"),
                     "名称": prop.full_name,
                     "id": prop.ref,
                     "权限": prop.access_text(),
@@ -136,7 +137,7 @@ def spec_search(
         if needle in f"{action.full_name} {action.description}".lower():
             rows.append(
                 {
-                    "类型": "动作",
+                    "类型": t("动作"),
                     "名称": action.full_name,
                     "id": action.ref,
                     "权限": "-",
@@ -150,7 +151,7 @@ def spec_search(
 @app.command("dump")
 def spec_dump(
     ctx: typer.Context,
-    target: Annotated[str, typer.Argument(help="设备名称、别名、did 或 urn")],
+    target: Annotated[str, typer.Argument(help=t("设备名称、别名、did 或 urn"))],
     output: OutputOption = None,
 ) -> None:
     """输出完整 spec，方便喂给脚本。"""
@@ -229,4 +230,4 @@ def cache_clear(ctx: typer.Context) -> None:
         for path in spec_dir.glob("*.json"):
             path.unlink()
             count += 1
-    render.success(f"已清除 {count} 份 spec 缓存")
+    render.success(t("已清除 {count} 份 spec 缓存", count=count))

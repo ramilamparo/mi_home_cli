@@ -310,6 +310,11 @@ mi version
 也支持环境变量 `MI_PROFILE` / `MI_REGION` / `MI_OUTPUT` / `MI_CHANNEL` /
 `MI_SCAN_DEVICE_NAME`。
 
+界面语言（中文 / English）按这个顺序决定：环境变量 `MI_LANG`（`zh` / `en`）→
+`mi config set lang en` → 系统 locale（`LC_ALL` > `LC_MESSAGES` > `LANG`，`zh*` 为中文，
+其余为英文）。`-o json/yaml` 里原本是中文的列名会跟着语言走（英文下 `检查项` 变成
+`Check`），脚本里想要稳定的键就固定 `MI_LANG`。
+
 ```bash
 mi -o plain get 台灯 brightness        # 只输出 "60"，可以直接 $(...)
 mi -o json device list | jq '.[] | select(.online)'

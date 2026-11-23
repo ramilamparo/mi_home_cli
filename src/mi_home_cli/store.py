@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .i18n import t
 from .core import const
 from .core.const import DEFAULT_REGION, TOKEN_REFRESH_RATIO
 from .errors import MiCliError, NotAuthenticated
@@ -54,7 +55,7 @@ def _read_json(path: Path) -> dict[str, Any] | None:
         with path.open(encoding="utf-8") as fp:
             return json.load(fp)
     except (OSError, json.JSONDecodeError) as err:
-        raise MiCliError(f"读取 {path} 失败：{err}") from err
+        raise MiCliError(t("读取 {path} 失败：{err}", path=path, err=err)) from err
 
 
 def file_is_private(path: Path) -> bool:
@@ -121,7 +122,7 @@ class AuthData:
                 nickname=data.get("nickname"),
             )
         except KeyError as err:
-            raise NotAuthenticated(f"登录信息不完整，缺少 {err}") from err
+            raise NotAuthenticated(t("登录信息不完整，缺少 {err}", err=err)) from err
 
 
 @dataclass
@@ -197,7 +198,7 @@ class Profile:
     def require_auth(self) -> AuthData:
         auth = self.read_auth()
         if auth is None:
-            raise NotAuthenticated(f"profile `{self.name}` 尚未登录")
+            raise NotAuthenticated(t("profile `{name}` 尚未登录", name=self.name))
         return auth
 
     def write_auth(self, auth: AuthData) -> None:

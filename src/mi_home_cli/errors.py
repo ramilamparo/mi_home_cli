@@ -4,6 +4,8 @@
 """
 from __future__ import annotations
 
+from .i18n import t
+
 
 class MiCliError(Exception):
     """所有可预期错误的基类，携带退出码。
@@ -71,8 +73,8 @@ class NotAuthenticated(MiCliError):
 
     def __init__(
         self,
-        message: str = "未登录或登录已失效",
+        message: str = t("未登录或登录已失效"),
         *,
-        hint: str | None = "运行 `mi auth login` 重新登录",
+        hint: str | None = t("运行 `mi auth login` 重新登录"),
     ) -> None:
         super().__init__(message, hint=hint)
