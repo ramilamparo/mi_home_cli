@@ -1,5 +1,7 @@
 # 哪些摄像机能通过 OAuth2 拿到推流地址
 
+[English](camera-stream.en.md) · **简体中文**
+
 部分型号的 spec 里带 `camera-stream-for-google-home` /
 `camera-stream-for-amazon-alexa` 服务。这两个服务本来是给 Google Home 和 Alexa 用的，
 但它们就是普通的 spec 服务——**任何能调 spec 动作的客户端都能用**，本项目的 OAuth2

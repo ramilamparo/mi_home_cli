@@ -1,5 +1,7 @@
 # 米家控制 CLI — 实现方案设计
 
+[English](design.en.md) · **简体中文**
+
 > 参考对象：[XiaoMi/ha_xiaomi_home](https://github.com/XiaoMi/ha_xiaomi_home)（Home Assistant 米家集成）
 > 本文只描述**如何实现**；命令清单见 [cli-spec.md](./cli-spec.md)。
 

@@ -1,6 +1,6 @@
 # mi_home_cli
 
-**简体中文** · [English](README.en.md)
+**English** · [简体中文](README.zh.md)
 
 [![PyPI](https://img.shields.io/pypi/v/mi-home-cli?color=blue)](https://pypi.org/project/mi-home-cli/)
 [![Downloads](https://static.pepy.tech/badge/mi-home-cli/month)](https://pepy.tech/project/mi-home-cli)
@@ -8,455 +8,489 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/slightc/mi_home_cli?style=social)](https://github.com/slightc/mi_home_cli/stargazers)
 
-命令行控制米家（Xiaomi Home）设备。
+Control your Xiaomi Home (Mi Home / MIoT) devices from the command line.
 
 ```bash
-mi device list --room 客厅          # 看看有什么
-mi set 台灯 on=true brightness=60   # 控制
-mi light 台灯 --ct 4000 --color 暖   # 或者用人话
-mi watch 净化器 -o json | jq        # 实时盯着，喂给脚本
+mi device list --room "Living Room"   # see what you've got
+mi set lamp on=true brightness=60     # control it
+mi light lamp --ct 4000 --color warm  # ...or in plain words
+mi watch purifier -o json | jq        # stream in real time, feed it to scripts
 ```
 
-协议行为参考 [XiaoMi/ha_xiaomi_home](https://github.com/XiaoMi/ha_xiaomi_home)（小米官方的
-Home Assistant 集成）独立实现，**不包含其任何源码或资源文件**，也与小米公司无关。
+Protocol behavior is independently reimplemented with reference to
+[XiaoMi/ha_xiaomi_home](https://github.com/XiaoMi/ha_xiaomi_home) (Xiaomi's official
+Home Assistant integration). It **contains none of its source code or resources**, and
+is not affiliated with Xiaomi.
 
 ---
 
-## 特点
+## Features
 
-- **不用记 did**：设备可以用名称、别名、`房间/名称`、型号来指；属性可以写 `on`、
-  `light.brightness` 或 `2.1`，枚举值直接写中文（`mode=睡眠`）。
-- **spec 驱动**：取值范围、枚举、读写权限都来自设备自己的 MIoT spec，越界和写只读属性
-  在发请求之前就被拦下。
-- **能当积木用**：`-o json` 输出稳定结构，`-o plain` 直接取值，退出码分类明确。
-- **实时推送**：`mi watch` 走云端 MQTT 长连接，不是轮询。
-- **局域网直连**：支持的设备可以绕开云端，延迟从 1~2 秒降到几十毫秒。
-- **凭据只在本地**：`~/.config/mi-home-cli/`，文件 0600，不上传任何第三方服务。
+- **No `did` to memorize**: refer to devices by name, alias, `room/name`, or model;
+  refer to properties by `on`, `light.brightness`, or `2.1`; write enum values as
+  plain words (`mode=sleep`).
+- **spec-driven**: value ranges, enums, and read/write permissions all come from the
+  device's own MIoT spec. Out-of-range values and writes to read-only properties are
+  rejected *before* a request is ever sent.
+- **Composable**: `-o json` gives stable structured output, `-o plain` gives you the
+  bare value, and exit codes are clearly categorized.
+- **Real-time push**: `mi watch` rides a cloud MQTT long connection — not polling.
+- **Local (LAN) direct control**: supported devices can bypass the cloud, dropping
+  latency from 1–2 s to tens of milliseconds.
+- **Credentials stay local**: `~/.config/mi-home-cli/`, files mode `0600`, never
+  uploaded to any third-party service.
 
-## 安装
+## Install
 
-需要 Python 3.11+。推荐用 [uv](https://docs.astral.sh/uv/) 或 pipx 从 PyPI 装，
-一行装好全局 `mi` 命令：
+Requires Python 3.11+. Install from PyPI with [uv](https://docs.astral.sh/uv/) or
+pipx for a global `mi` command in one line:
 
 ```bash
-uv tool install --with zeroconf mi-home-cli   # 推荐
-# 或
+uv tool install --with zeroconf mi-home-cli   # recommended
+# or
 pipx install mi-home-cli
-# 或
+# or
 pip install mi-home-cli
 ```
 
-`--with zeroconf`（pipx 用 `pipx install "mi-home-cli[mdns]"`）是可选的 mdns 增强，
-能提高登录时自动接收回调的成功率。扫码登录（`mi auth login --scan`）开箱即用，
-不需要额外装依赖。
+`--with zeroconf` (with pipx: `pipx install "mi-home-cli[mdns]"`) is the optional mdns
+enhancement — it improves the success rate of automatically receiving the login
+callback. QR login (`mi auth login --scan`) works out of the box — nothing extra to
+install.
 
-装好后：
+Then:
 
 ```bash
 mi --help
 ```
 
 <details>
-<summary><b>从源码安装（开发或想改代码）</b></summary>
+<summary><b>From source (development, or to hack on it)</b></summary>
 
 ```bash
 git clone https://github.com/slightc/mi_home_cli && cd mi_home_cli
-uv sync --extra mdns      # mdns 是可选依赖，能提高登录时自动接收回调的成功率
+uv sync --extra mdns      # mdns is optional; it improves the success rate of
+                          # automatically receiving the login callback
 uv run mi --help
 ```
 
-从源码跑时把下文的 `mi` 换成 `uv run mi`。
+When running from source, replace `mi` with `uv run mi` below.
 </details>
 
-## 快速开始
+## Quick start
 
 ```bash
-mi doctor          # 先体检：端口、域名解析、网络、证书、时钟
-mi auth login      # 浏览器登录小米账号
-mi device sync     # 拉取家庭、房间、设备清单
+mi doctor          # health check first: ports, DNS, network, certs, clock
+mi auth login      # log into your Xiaomi account in the browser
+mi device sync     # pull homes, rooms, and the device list
 mi device list
 
-mi home use 我家    # 多个家庭时强烈建议设一个默认家庭
-mi device alias set "米家空气净化器 6" 净化器
+mi home use Home   # with multiple homes, setting a default is strongly advised
+mi device alias set "Mijia Air Purifier 6" purifier
 
-mi get 净化器       # 读所有可读属性
-mi set 净化器 mode=睡眠
-mi fan 净化器 --speed 2
+mi get purifier    # read every readable property
+mi set purifier mode=sleep
+mi fan purifier --speed 2
 ```
 
-> 从源码跑（未装到 PyPI）就把 `mi` 换成 `uv run mi`。
+> Running from source (not installed from PyPI)? Replace `mi` with `uv run mi`.
 
-### 关于登录
+### About login
 
-小米的 OAuth 服务只接受 host 为 `homeassistant.local:8123` 的回调地址
-（实测结论见 [design.md §3.2](docs/design.md)），所以 `mi auth login` 会：
+Xiaomi's OAuth service only accepts a callback host of `homeassistant.local:8123`
+(see the empirical findings in [design.en.md §3.2](docs/design.en.md#32-login-flow-the-hard-part-of-the-cli-version)), so `mi auth login`
+will:
 
-1. 监听本机 8123 端口；
-2. 尝试用 mDNS 把 `homeassistant.local` 指向本机，让浏览器能跳回来；
-3. 上面两步都不成也不影响——授权后浏览器会停在一个打不开的地址上，
-   **把地址栏里的整段地址粘回终端**即可（`mi auth login --manual` 直接走这条路）。
+1. listen on local port 8123;
+2. try to point `homeassistant.local` at your machine via mDNS so the browser can
+   redirect back;
+3. if neither works, it still doesn't matter — after authorizing, the browser lands on
+   an unreachable URL, so just **paste the whole address from the address bar back into
+   the terminal** (`mi auth login --manual` goes straight down this path).
 
-本地回调和粘贴是同时等待的，谁先到用谁。token 用掉 70% 有效期后自动续期。
+The local callback and the paste are awaited at the same time; whichever arrives first
+wins. Tokens auto-renew once 70% of their lifetime is used.
 
-**嫌浏览器麻烦？用扫码登录：**
+**Prefer not to touch a browser? Use QR login:**
 
 ```bash
 mi auth login --scan
 ```
 
-终端里会画出一个二维码，用小米 App 扫一扫（我的 → 右上角扫一扫，或设置 →
-小米账号），在手机上点「确认登录」即可——全程不碰浏览器、不用粘贴。这是纯 API
-调用复刻登录页的跳转流程（不引入无头浏览器），扫码拿到的授权码和浏览器登录
-完全一样。装好这个工具就能直接用，不需要额外装什么。
+A QR code is drawn right in your terminal. Scan it with the Mi Home / Xiaomi Home app
+(Me → the scan button, or Settings → Xiaomi Account) and tap "Confirm login" on your
+phone — no browser, no pasting. This is a pure-API reimplementation of the login page's
+redirect flow (**no headless browser**); the auth code it yields is exactly the one the
+browser flow produces. It works out of the box — nothing extra to install.
 
-终端二维码受字体和行距影响，个别终端里可能扫不出——不要紧，命令还会**一并打印
-一个二维码图片地址**，用浏览器打开那张图再扫即可，同一个二维码，不会卡住。
+The terminal QR depends on your font and line spacing, so in a few terminals it may not
+scan — that's fine: the command also **prints a QR image URL**. Open that image in a
+browser and scan it instead (same QR), so you're never stuck.
 
-扫码在小米账号「登录设备」里默认显示为 `mi-home-cli/版本`（不是一堆 Chrome），
-而且同一台机器反复扫码只算同一台设备。想换个显示名：
-
-```bash
-mi config set scan_device_name "Chen-MacBook"   # 或环境变量 MI_SCAN_DEVICE_NAME
-```
-
-（这个名字会作为 HTTP User-Agent 发送，只能用 ASCII，带不了中文。）
-
-## 核心概念
-
-### 设备怎么指
-
-按精确度从高到低匹配，某一级命中就不再往下找：
-
-```
-did → 别名 → 名称精确匹配 → 房间/名称 → 名称子串 → 型号
-```
-
-同一级命中多个就报歧义并列出候选（退出码 4），可以用 `--home` / `--room` / `--model`
-缩小范围，或者干脆起个别名：
+In your Xiaomi account's "login devices" list this shows as `mi-home-cli/<version>`
+(not a pile of "Chrome" entries), and repeated scans on one machine count as the same
+device. To change the shown name:
 
 ```bash
-mi device alias set "石头自清洁扫拖机器人G10" 扫地机
-mi on 扫地机
+mi config set scan_device_name "Chen-MacBook"   # or env var MI_SCAN_DEVICE_NAME
 ```
 
-### 属性怎么写
+(The name is sent as the HTTP User-Agent, so it must be ASCII.)
 
-三种写法等价，都由设备的 spec 解析：
+## Core concepts
+
+### How to refer to a device
+
+Matched from most to least specific; the first level that hits stops the search:
+
+```
+did → alias → exact name → room/name → name substring → model
+```
+
+If more than one device matches at the same level, you get an ambiguity error listing
+the candidates (exit code 4). Narrow it with `--home` / `--room` / `--model`, or just
+give it an alias:
 
 ```bash
-mi get 台灯 2.2                  # siid.piid
-mi get 台灯 light.brightness     # 服务.属性
-mi get 台灯 brightness           # 裸名（该设备内唯一才行）
+mi device alias set "Roborock Self-Cleaning Robot G10" vacuum
+mi on vacuum
 ```
 
-裸名在多个服务里都存在时，优先设备的主服务——空气净化器的 `on` 指主体开关而不是
-屏幕，想要屏幕的写 `screen.on`。
+### How to write a property
 
-值也一样宽松：`on=true` / `on=开` / `on=1` 等价，枚举值 `mode=睡眠` / `mode=Sleep` /
-`mode=3` 等价。
-
-### 默认家庭
-
-家庭多了设备重名很常见。设一个默认家庭之后，设备解析、`device list`、`room list`
-都只看这个家庭：
+Three equivalent forms, all resolved by the device's spec:
 
 ```bash
-mi home use 我家
-mi home select           # 交互式选一个（也能选取消）
-mi home unset            # 取消默认家庭
-mi home use --clear      # 同上，取消
-mi --all-homes ...       # 临时跨家庭
+mi get lamp 2.2                  # siid.piid
+mi get lamp light.brightness     # service.property
+mi get lamp brightness           # bare name (only if unique within that device)
 ```
 
-设备在别的家庭时不会静默跨家庭操作，而是告诉你它在哪：
+When a bare name exists in multiple services, the device's primary service wins — an
+air purifier's `on` means the main power switch, not the screen; use `screen.on` for
+the screen.
+
+Values are just as forgiving: `on=true` / `on=on` / `on=1` are equivalent, and enum
+values `mode=sleep` / `mode=Sleep` / `mode=3` are equivalent.
+
+### Default home
+
+With several homes, duplicate device names are common. Once a default home is set,
+device resolution, `device list`, and `room list` only look at that home:
+
+```bash
+mi home use Home
+mi home select           # pick one interactively (can also clear)
+mi home unset            # clear the default home
+mi home use --clear      # same, cancel
+mi --all-homes ...       # cross-home, one-off
+```
+
+A device in another home is never operated silently across homes — instead it tells you
+where it is:
 
 ```
-✗ 默认家庭「我家」里没有 `筒射灯 8`，但在 观湖园19栋301/进门走廊 的 筒射灯 8 找到了
-提示：加 --all-homes 跨家庭操作，或用 `mi home use` 换默认家庭
+✗ No `Downlight 8` in default home "Home", but found Downlight 8 in Lakeview Bldg 19 #301 / Entry Hallway
+hint: add --all-homes to operate across homes, or switch default with `mi home use`
 ```
 
-### 控制通道
+### Control channel
 
-| 通道 | 行为 |
+| Channel | Behavior |
 | --- | --- |
-| `cloud`（默认） | 走米家云端，任何设备都能用 |
-| `lan` | 只走局域网直连，不成立就报错说清楚卡在哪 |
-| `auto` | 能直连就直连，任何一步不成立（包括调用本身失败）静默回落云端 |
+| `cloud` (default) | goes through the Mi Home cloud; works for any device |
+| `lan` | LAN direct only; if it can't, it errors and says exactly where it got stuck |
+| `auto` | direct if possible; silently falls back to cloud if any step fails (including the call itself) |
 
 ```bash
-mi --channel lan get 净化器 on
-mi config set channel auto     # 想默认走局域网
+mi --channel lan get purifier on
+mi config set channel auto     # to default to LAN
 ```
 
-默认是 `cloud`：局域网首次命中要付一次探活加一次可能失败的调用，这份等待不该由
-默认承担。
+The default is `cloud`: a first LAN hit costs a liveness probe plus one possibly-failing
+call, and the default shouldn't pay that wait.
 
-## 命令一览
+## Command overview
 
-完整参数见 [docs/cli-spec.md](docs/cli-spec.md)。
+Full arguments in [docs/cli-spec.en.md](docs/cli-spec.en.md).
 
-### 账号
+### Account
 
 ```bash
 mi auth login [--scan] [--manual] [--no-browser] [--region cn]
-mi auth login --scan         # 扫码登录：终端画二维码，用小米 App 扫，不用浏览器
-mi auth status [--check]     # 登录状态、token 剩余有效期
-mi auth exchange <code|URL>  # 换 token 那步失败时，用同一个授权码重试
+mi auth login --scan         # QR login: a QR in the terminal, scan with the app
+mi auth status [--check]     # login state, remaining token lifetime
+mi auth exchange <code|URL>  # retry the token-exchange step with the same auth code
 mi auth refresh | whoami | logout
 mi profile list|use|remove|path
 ```
 
-### 查看
+### Viewing
 
 ```bash
 mi home list
-mi home use [<家庭>] [--clear]
-mi home select                 # 交互式选择默认家庭
-mi home unset                  # 取消默认家庭
-mi room list [--home 我家]
+mi home use [<home>] [--clear]
+mi home select                 # pick the default home interactively
+mi home unset                  # clear the default home
+mi room list [--home Home]
 mi device list [--home] [--room] [--model] [--search] [--online|--offline] [--wide]
-mi device show <设备>
+mi device show <device>
 mi device sync
 mi device alias set|list|rm
-mi device token <设备> [--show-secrets]
+mi device token <device> [--show-secrets]
 ```
 
-### 能力
+### Capabilities
 
 ```bash
-mi spec show <设备|urn> [--siid N] [--writable] [--actions]
-mi spec search <设备> <关键词>
-mi spec dump <设备>            # 完整 spec，喂给脚本或 LLM
+mi spec show <device|urn> [--siid N] [--writable] [--actions]
+mi spec search <device> <keyword>
+mi spec dump <device>            # full spec, for scripts or an LLM
 mi spec cache info|clear
 ```
 
-`mi spec show` 是查 `siid.piid`、取值范围、枚举值的入口：
+`mi spec show` is the entry point for looking up `siid.piid`, value ranges, and enums:
 
 ```
-服务    属性               id    权限  类型    取值            单位  说明
-light   on                 2.1   rwn   bool    -               -     开关
-light   brightness         2.2   rwn   uint8   1~100 step 1    %     亮度
-light   color-temperature  2.3   rwn   uint16  2700~6000       K     色温
-light   mode               2.7   rwn   uint8   0=空场景 4=日光…  -     模式
+service property           id    perm  type    range           unit  desc
+light   on                 2.1   rwn   bool    -               -     switch
+light   brightness         2.2   rwn   uint8   1~100 step 1    %     brightness
+light   color-temperature  2.3   rwn   uint16  2700~6000       K     color temp
+light   mode               2.7   rwn   uint8   0=None 4=Day…    -     mode
 ```
 
-### 控制
+### Control
 
 ```bash
-mi get <设备> [属性...]              # 不写属性就读全部可读属性
-mi set <设备> <属性=值>...           # 一次多条，批量下发
-mi action <设备> [动作] [--in 值]...  # 不给动作名就列出所有动作
-mi on|off|toggle <设备>
+mi get <device> [prop...]             # no prop = read all readable properties
+mi set <device> <prop=value>...       # multiple at once, batched
+mi action <device> [action] [--in v]...  # no action name = list all actions
+mi on|off|toggle <device>
 
-# 语义命令（不带选项时显示当前状态）
-mi light <设备> [--on|--off] [--brightness 60] [--ct 4000] [--color 红] [--mode 日光]
-mi climate <设备> [--on|--off] [--mode 制冷] [--temp 26] [--fan 2]
-mi cover <设备> [--open|--close|--stop] [--position 50]
-mi fan <设备> [--on|--off] [--speed 2] [--mode 自动] [--swing]
+# semantic commands (show current state when given no options)
+mi light <device> [--on|--off] [--brightness 60] [--ct 4000] [--color red] [--mode day]
+mi climate <device> [--on|--off] [--mode cool] [--temp 26] [--fan 2]
+mi cover <device> [--open|--close|--stop] [--position 50]
+mi fan <device> [--on|--off] [--speed 2] [--mode auto] [--swing]
 ```
 
-写操作会打印「旧值 → 新值 → 结果」，改错了照着回滚。加 `--verify` 会在写完后回读一次，
-以设备真实状态为准（多一次往返）。
+Writes print `old → new → result`, so you can roll back if you got it wrong. Add
+`--verify` to read the value back after writing and trust the device's real state
+(one extra round trip).
 
-### 实时
+### Real time
 
 ```bash
-mi watch [设备...] [--prop on] [--no-events] [--no-state]
-                   [--all-updates] [--exit-after N] [--duration 秒]
+mi watch [device...] [--prop on] [--no-events] [--no-state]
+                     [--all-updates] [--exit-after N] [--duration SECONDS]
 ```
 
-不指定设备就盯默认家庭的全部设备。设备会周期性重报同一个值，默认跳过，
-`--all-updates` 全显示。
+With no device, it watches every device in the default home. Devices periodically
+re-report the same value; those are skipped by default, `--all-updates` shows them all.
 
 ```bash
-# 当成自动化触发器用
-mi watch 门锁 -o json | while read -r line; do
+# use it as an automation trigger
+mi watch door-lock -o json | while read -r line; do
   echo "$line" | jq -r 'select(.kind=="event")'
 done
 ```
 
-### 局域网
+### LAN
 
 ```bash
-mi lan list                  # 清单里哪些设备支持直连
-mi lan discover              # 广播扫描并缓存 IP
-mi lan status <设备>          # 可达性、IP、延迟
-mi lan raw <设备> miIO.info   # 直接发一条 miIO 请求（排查用）
+mi lan list                  # which devices in the list support direct control
+mi lan discover              # broadcast scan and cache IPs
+mi lan status <device>        # reachability, IP, latency
+mi lan raw <device> miIO.info # send one raw miIO request (for troubleshooting)
 ```
 
-### 其他
+### Misc
 
 ```bash
 mi config list|get|set|unset|path    # profile / region / output / home / channel
-mi doctor                            # 环境体检
-mi --install-completion              # shell 补全（typer 内置）
+mi doctor                            # environment health check
+mi --install-completion              # shell completion (built into typer)
 mi version
 ```
 
-## 脚本化
+## Scripting
 
-全局参数放在子命令之前（`-o` 也可以跟在子命令后面）：
+Global options go before the subcommand (`-o` may also follow the subcommand):
 
-| 参数 | 说明 |
+| Option | Meaning |
 | --- | --- |
-| `-o, --output` | `table`（默认）/ `json` / `yaml` / `plain` |
-| `-p, --profile` | 多账号隔离 |
-| `--channel` | `cloud`（默认）/ `auto` / `lan` |
-| `--home` / `--all-homes` | 限定或忽略默认家庭 |
-| `--dry-run` | 只解析校验，不下发 |
-| `--verify` | 写入后回读确认 |
-| `-v, --verbose` | 打印请求细节、走了哪条通道 |
+| `-o, --output` | `table` (default) / `json` / `yaml` / `plain` |
+| `-p, --profile` | multi-account isolation |
+| `--channel` | `cloud` (default) / `auto` / `lan` |
+| `--home` / `--all-homes` | limit to or ignore the default home |
+| `--dry-run` | parse and validate only, don't send |
+| `--verify` | read back after writing to confirm |
+| `-v, --verbose` | print request details and which channel was used |
 
-也支持环境变量 `MI_PROFILE` / `MI_REGION` / `MI_OUTPUT` / `MI_CHANNEL` /
-`MI_SCAN_DEVICE_NAME`。
+Environment variables `MI_PROFILE` / `MI_REGION` / `MI_OUTPUT` / `MI_CHANNEL` /
+`MI_SCAN_DEVICE_NAME` are also supported.
 
-界面语言（中文 / English）按这个顺序决定：环境变量 `MI_LANG`（`zh` / `en`）→
-`mi config set lang en` → 系统 locale（`LC_ALL` > `LC_MESSAGES` > `LANG`，`zh*` 为中文，
-其余为英文）。`-o json/yaml` 里原本是中文的列名会跟着语言走（英文下 `检查项` 变成
-`Check`），脚本里想要稳定的键就固定 `MI_LANG`。
+The interface language (Chinese / English) is picked in this order: the `MI_LANG`
+environment variable (`zh` / `en`) → `mi config set lang en` → the system locale
+(`LC_ALL` > `LC_MESSAGES` > `LANG`; `zh*` means Chinese, anything else English).
+Column names that are Chinese in `-o json/yaml` output follow the language (`检查项`
+becomes `Check` in English), so pin `MI_LANG` in scripts that need stable keys.
 
 ```bash
-mi -o plain get 台灯 brightness        # 只输出 "60"，可以直接 $(...)
+mi -o plain get lamp brightness        # prints just "60", drop it straight into $(...)
 mi -o json device list | jq '.[] | select(.online)'
 ```
 
-JSON / YAML 输出用英文字段名和原始类型（`"online": true` 而不是「在线: 是」），
-表格里的中文表头只出现在给人看的那一档。
+JSON / YAML output uses English field names and raw types (`"online": true`, not
+`"online": "yes"`); the Chinese table headers only appear in the human-facing tier.
 
-## 给 AI agent 用
+## For AI agents
 
-仓库里带了一个 [Claude Code skill](.claude/skills/mi-home/SKILL.md)：在本仓库里跑
-Claude Code 会自动加载，它会教 agent 怎么定位设备、查 spec、按退出码分支处理，
-以及控制真实设备时该怎么谨慎（歧义要问、写操作有物理效果、别轮询）。
+The repo ships a [Claude Code skill](.claude/skills/mi-home/SKILL.md): running Claude
+Code inside this repo loads it automatically. It teaches an agent how to locate devices,
+inspect specs, branch on exit codes, and be careful when controlling real devices (ask
+on ambiguity, writes have physical effects, don't poll).
 
-想全局启用：`cp -r .claude/skills/mi-home ~/.claude/skills/`
+To enable it globally: `cp -r .claude/skills/mi-home ~/.claude/skills/`
 
-退出码：
+Exit codes:
 
-| 码 | 含义 | 码 | 含义 |
+| Code | Meaning | Code | Meaning |
 | --- | --- | --- | --- |
-| 0 | 成功 | 6 | 属性/动作不存在 |
-| 1 | 通用错误 | 7 | 值非法（越界、不可写） |
-| 2 | 参数错误 | 8 | 网络错误 |
-| 3 | 设备不存在 | 9 | 云端返回错误 |
-| 4 | 设备引用有歧义 | 10 | 未登录或登录失效 |
-| 5 | 设备离线/不可达 | 130 | Ctrl-C 中断 |
+| 0 | success | 6 | property/action not found |
+| 1 | generic error | 7 | illegal value (out of range, read-only) |
+| 2 | argument error | 8 | network error |
+| 3 | device not found | 9 | cloud returned an error |
+| 4 | ambiguous device reference | 10 | not logged in or session expired |
+| 5 | device offline/unreachable | 130 | Ctrl-C interrupt |
 
-## 数据存放
+## Where data lives
 
 ```
 ~/.config/mi-home-cli/
-├── config.json                 # 默认 profile / 区域 / 输出格式 / 家庭 / 通道
+├── config.json                 # default profile / region / output / home / channel
 └── profiles/<name>/
-    ├── auth.json               # token（0600）
-    ├── identity.json           # OAuth 用的 device_id、回调 id
-    ├── scan_device.json        # 扫码登录复用的 web deviceId，避免每次多登记一台设备
-    ├── devices.json            # 设备清单缓存，含局域网 token（0600）
-    ├── aliases.json            # 自定义别名
-    ├── lan.json                # 局域网地址缓存
-    └── spec/                   # spec 缓存，14 天
+    ├── auth.json               # tokens (0600)
+    ├── identity.json           # device_id and callback id used for OAuth
+    ├── scan_device.json        # reused web deviceId for QR login (avoids piling up devices)
+    ├── devices.json            # device list cache, incl. LAN tokens (0600)
+    ├── aliases.json            # custom aliases
+    ├── lan.json                # LAN address cache
+    └── spec/                   # spec cache, 14 days
 ```
 
-用 `MI_HOME_CONFIG_DIR` 可以改位置。设备 token 等价于局域网控制权，任何输出里默认打码，
-`--show-secrets` 才明文。
+Set `MI_HOME_CONFIG_DIR` to change the location. A device token is equivalent to LAN
+control, so it's masked in all output by default; `--show-secrets` prints it in the
+clear.
 
-## 常见问题
+## FAQ
 
 <details>
-<summary><b>登录时浏览器跳到一个打不开的地址</b></summary>
+<summary><b>On login, the browser jumps to an unreachable URL</b></summary>
 
-正常。小米只认 `homeassistant.local:8123` 这个回调 host，而你机器上多半没有 Home
-Assistant。把浏览器地址栏里的整段地址粘回终端即可，CLI 一直在等。
+That's normal. Xiaomi only accepts `homeassistant.local:8123` as the callback host, and
+your machine most likely has no Home Assistant. Just paste the whole address from the
+browser's address bar back into the terminal — the CLI is still waiting.
 </details>
 
 <details>
-<summary><b>macOS 上 <code>mi lan discover</code> 扫不到任何设备</b></summary>
+<summary><b>On macOS, <code>mi lan discover</code> finds no devices</b></summary>
 
-macOS 14+ 会拦截终端发出的局域网广播，而且**静默丢弃、不报错**。去
-`系统设置 → 隐私与安全性 → 本地网络` 放行你的终端（Terminal / iTerm / VS Code）。
+macOS 14+ blocks LAN broadcasts sent from the terminal, and **drops them silently, with
+no error**. Allow your terminal (Terminal / iTerm / VS Code) under
+`System Settings → Privacy & Security → Local Network`.
 
-其次检查：和设备在同一网段？路由器开了 AP 隔离？
+Then check: on the same subnet as the device? AP isolation enabled on the router?
 </details>
 
 <details>
-<summary><b><code>mi watch</code> 报证书校验失败</b></summary>
+<summary><b><code>mi watch</code> reports a certificate verification failure</b></summary>
 
-两种原因：
+Two causes:
 
-1. **系统根证书库是空的**。uv 装的 Python 在 macOS 上常见（`ssl.create_default_context()`
-   里 0 张证书）。CLI 会自动退回 certifi，能连上；想一劳永逸就在 shell 配置里加
-   `export SSL_CERT_FILE=$(python -m certifi)`。
-2. **代理在做中间人**。Clash / Surge 的 fake-IP 会把域名解析到 `198.18.x.x`。给
-   `mqtt.io.mi.com` 加一条直连规则，或用 `MI_CA_BUNDLE=/path/to/ca.pem` 指定代理根证书。
+1. **The system root CA store is empty.** Common with uv-installed Python on macOS
+   (`ssl.create_default_context()` has 0 certs). The CLI automatically falls back to
+   certifi and can connect; to fix it for good, add
+   `export SSL_CERT_FILE=$(python -m certifi)` to your shell config.
+2. **A proxy is doing MITM.** Clash / Surge fake-IP resolves the domain to
+   `198.18.x.x`. Add a direct rule for `mqtt.io.mi.com`, or point at the proxy's root
+   cert with `MI_CA_BUNDLE=/path/to/ca.pem`.
 
-`mi doctor` 会把这两种情况分别指出来。
+`mi doctor` flags each of these separately.
 </details>
 
 <details>
-<summary><b>哪些设备能局域网直连</b></summary>
+<summary><b>Which devices support LAN direct control</b></summary>
 
-只有直连路由器的 WiFi/有线设备（`connect_type ∈ {0,8,12,23}` 且有 token）。蓝牙 Mesh、
-ZigBee 这些经网关接入的走不了——实测某账号 72 台设备里只有 21 台够格。`mi lan list` 能
-看出哪些可以。
+Only Wi-Fi/wired devices connected straight to the router (`connect_type ∈ {0,8,12,23}`
+with a token). Bluetooth Mesh, ZigBee, and anything behind a gateway can't — in one real
+account, only 21 of 72 devices qualified. `mi lan list` shows which ones can.
 
-**「扫得到」也不等于「能用」**：设备固件对 MIoT spec 方法的支持不一样。实测米家空气净化器 6
-的 `get_properties` 走局域网完全可用，而老固件的 Yeelight 台灯 `miIO.info` 通、
-`get_properties` 却回 `user ack timeout`。用 `mi lan raw <设备> miIO.info` 可以区分
-「协议不通」和「这个方法设备不支持」。`auto` 通道遇到这种设备会自动回落云端，并把结果记下来，
-后续命令不再白试。
+**"Discoverable" doesn't mean "usable":** device firmware supports MIoT spec methods
+differently. On the Mijia Air Purifier 6, `get_properties` over LAN works perfectly;
+on an older-firmware Yeelight lamp, `miIO.info` goes through but `get_properties` returns
+`user ack timeout`. `mi lan raw <device> miIO.info` distinguishes "protocol unreachable"
+from "this method isn't supported by the device". The `auto` channel falls back to cloud
+for such devices and records the result, so later commands don't retry in vain.
 </details>
 
 <details>
-<summary><b>写入返回 <code>code=1</code> 是失败吗</b></summary>
+<summary><b>Is a write returning <code>code=1</code> a failure?</b></summary>
 
-不是。`0` 是成功，`1` 是「已接受、设备执行中」——部分设备（实测 `dwdz.switch.sw0a01`）
-对每次写入都回 `1`，操作其实成功了。想要确凿结论加 `--verify`，它会在写完后回读一次。
+No. `0` is success, `1` is "accepted, device executing" — some devices (observed:
+`dwdz.switch.sw0a01`) return `1` on every write while the operation actually succeeded.
+For a definitive answer add `--verify`, which reads back once after writing.
 </details>
 
-## 开发
+## Development
 
 ```bash
 uv sync --extra mdns
 uv run pytest
 ```
 
-测试全部离线运行，不需要小米账号：云端接口用 `httpx.MockTransport` 回放，局域网协议用一个
-独立实现组包逻辑的假设备跑完整链路，MQTT 用假客户端验证接线。
+Tests run fully offline, no Xiaomi account needed: cloud endpoints are replayed with
+`httpx.MockTransport`, the LAN protocol runs the full chain against a fake device with an
+independent packet-assembly implementation, and MQTT wiring is verified with a fake
+client.
 
-改了 `pyproject.toml` 后跑 `uv lock` 更新锁文件。
+After editing `pyproject.toml`, run `uv lock` to update the lockfile.
 
-## 实现范围
+## Scope
 
-| | 状态 |
+| | Status |
 | --- | --- |
-| OAuth 登录（浏览器 / 粘贴 / 扫码 `--scan`）、token 续期、多账号 | ✅ |
-| 家庭 / 房间 / 设备清单 | ✅ |
-| spec 获取与缓存、属性读写、动作调用 | ✅ |
-| 语义命令、别名、默认家庭 | ✅ |
-| 云端 MQTT 实时推送 | ✅ |
-| 局域网直连（miIO） | ✅ |
-| 米家场景 / 自动化 | ❌ 需要账号密码那套身份，本项目只用 OAuth2 |
-| 摄像机报警录像回放 | ❌ 同上 |
-| 摄像机实时推流地址 | ⚠️ 部分型号可以，见 [docs/camera-stream.md](docs/camera-stream.md) |
-| 中枢网关本地控制 | ❌ 需要证书，仅 cn 区，复杂度高 |
+| OAuth login (browser / paste / QR `--scan`), token renewal, multi-account | ✅ |
+| Homes / rooms / device list | ✅ |
+| spec fetch & cache, property read/write, action calls | ✅ |
+| Semantic commands, aliases, default home | ✅ |
+| Cloud MQTT real-time push | ✅ |
+| LAN direct control (miIO) | ✅ |
+| Mi Home scenes / automations | ❌ needs the account-password identity; this project is OAuth2-only |
+| Camera alarm / recording playback | ❌ same as above |
+| Camera live stream URL | ⚠️ some models, see [docs/camera-stream.en.md](docs/camera-stream.en.md) |
+| Central gateway local control | ❌ needs certificates, cn region only, high complexity |
 
-**只用 OAuth2** 是一条明确的边界：授权在浏览器里完成，CLI 只拿到一个有期限、可撤销的
-token，全程不碰账号密码。代价是上面标 ❌ 的那些接口用不了——它们需要
-`serviceToken` + `ssecurity` 那套身份。需要的话
-[al-one/hass-xiaomi-miot](https://github.com/al-one/hass-xiaomi-miot)（Apache-2.0）
-覆盖得更全。
+**OAuth2-only** is a deliberate boundary: authorization happens in the browser, the CLI
+only ever holds a time-limited, revocable token, and never touches your account password.
+The cost is the ❌ endpoints above — they require the `serviceToken` + `ssecurity`
+identity. If you need those,
+[al-one/hass-xiaomi-miot](https://github.com/al-one/hass-xiaomi-miot) (Apache-2.0) covers
+more ground.
 
-设计与协议细节见 [docs/design.md](docs/design.md)，完整命令参考见
-[docs/cli-spec.md](docs/cli-spec.md)。
+Design and protocol details are in [docs/design.en.md](docs/design.en.md), and the full command
+reference is in [docs/cli-spec.en.md](docs/cli-spec.en.md).
 
-## 许可
+## License
 
-[MIT](LICENSE)。
+[MIT](LICENSE).
 
-## 声明
+## Disclaimer
 
-本项目与小米公司无关，`app/v2/*` 这些接口是小米提供给 Home Assistant 集成使用的，
-不是对外承诺的契约，随时可能变化。
+This project is not affiliated with Xiaomi. The `app/v2/*` endpoints are the ones Xiaomi
+provides for its Home Assistant integration — they are not a public contract and may
+change at any time.
 
-账号凭据仅保存在本机，不上传任何第三方服务。本项目不包含 `ha_xiaomi_home` 的任何源码或
-资源文件，仅参考其公开的接口行为。
+Account credentials are stored only on your machine and never uploaded to any third-party
+service. This project contains no source code or resources from `ha_xiaomi_home`; it only
+references its publicly observable interface behavior.

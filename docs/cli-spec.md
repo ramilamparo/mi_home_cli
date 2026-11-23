@@ -1,5 +1,7 @@
 # 米家 CLI — 命令清单
 
+[English](cli-spec.en.md) · **简体中文**
+
 可执行文件名：`mi`（备用别名 `mihome`）。设计原则：**高频操作短、低频操作全**。
 `mi set 客厅灯 on=true` 这类日常操作不需要记 did，也不需要记 siid/piid（解析规则见 [design.md §4](./design.md#4-两个好用度核心设备解析与属性解析)）。
 
