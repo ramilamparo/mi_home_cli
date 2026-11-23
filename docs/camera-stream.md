@@ -1,89 +1,95 @@
-# 哪些摄像机能通过 OAuth2 拿到推流地址
+# Which cameras can hand out a stream address via OAuth2
 
-[English](camera-stream.en.md) · **简体中文**
-
-部分型号的 spec 里带 `camera-stream-for-google-home` /
-`camera-stream-for-amazon-alexa` 服务。这两个服务本来是给 Google Home 和 Alexa 用的，
-但它们就是普通的 spec 服务——**任何能调 spec 动作的客户端都能用**，本项目的 OAuth2
-身份足够，不需要账号密码那套。
+The spec of some models carries the `camera-stream-for-google-home` /
+`camera-stream-for-amazon-alexa` services. These two services were originally meant for
+Google Home and Alexa, but they are just ordinary spec services — **any client that can
+call spec actions can use them**; this project's OAuth2 identity is sufficient, and the
+account-password identity is not needed.
 
 ```bash
-mi action <摄像机>                        # 有 start-rtsp-stream 就能拿地址
-mi action <摄像机> start-rtsp-stream --in 2
+mi action <camera>                        # if start-rtsp-stream is there, you can get an address
+mi action <camera> start-rtsp-stream --in 2
 # ↳ stream-address    rtsp://...
 # ↳ expiration-time   ...
 ```
 
-地址有过期时间，用完记得 `stop-stream`。
+The address has an expiry time; remember to `stop-stream` when you are done.
 
-## 支不支持是按 SKU 定的
+## Support is decided per SKU
 
-同一款产品的不同 SKU 可能一个有一个没有，别按产品名判断：
+Different SKUs of the same product may differ, one having it and the other not, so do
+not judge by the product name:
 
-| 型号 | 官方推流 |
+| Model | Official streaming |
 | --- | --- |
-| `chuangmi.camera.039c01`（智能摄像机2 云台版） | ❌ |
-| `chuangmi.camera.039c04`（同产品另一 SKU） | ✅ |
-| `chuangmi.camera.079ac1`（智能摄像机4 4K） | ❌ |
-| `chuangmi.camera.079ae2`（同产品另一 SKU） | ✅ |
+| `chuangmi.camera.039c01` (Smart Camera 2 PTZ) | ❌ |
+| `chuangmi.camera.039c04` (another SKU of the same product) | ✅ |
+| `chuangmi.camera.079ac1` (Smart Camera 4 4K) | ❌ |
+| `chuangmi.camera.079ae2` (another SKU of the same product) | ✅ |
 
-没有这个服务的型号只有 `p2p-stream`，只能靠
-[go2rtc](https://go2rtc.org/internal/xiaomi/) 之类自己实现了 cs2 的项目取流，原因见下。
+Models without this service only have `p2p-stream`, and the stream can only be fetched
+through projects that implement cs2 themselves, such as
+[go2rtc](https://go2rtc.org/internal/xiaomi/); the reasons follow.
 
-## 为什么 `p2p-stream` 在 OAuth2 下取不到画面
+## Why no picture can be obtained from `p2p-stream` under OAuth2
 
-结论：**取不到**，而且不是"接口没找到"，是身份边界决定的。实测证据：
+Conclusion: **it cannot be obtained**, and not because "the API was not found" but
+because the identity boundary decides so. Evidence from testing:
 
-**1. 设备侧不给连接参数。** 调 `start-p2p-stream`（siid 9 / aiid 1）返回
-`code: 0` 但 `out` 为空——会话开了，可地址、session id、密钥一个都没有：
+**1. The device side gives no connection parameters.** Calling `start-p2p-stream`
+(siid 9 / aiid 1) returns `code: 0` but an empty `out` — the session is opened, yet
+there is no address, no session id and no key at all:
 
 ```json
 {"did":"...","siid":9,"aiid":1,"code":0,"exe_time":99}
 ```
 
-**2. 密钥要单独换，而那个接口在另一套身份下。** go2rtc（MIT）的实现里
-（`internal/xiaomi/xiaomi.go`），每次连接前要向云端换密钥：
+**2. The key has to be exchanged separately, and that API is under the other
+identity.** In go2rtc's (MIT) implementation (`internal/xiaomi/xiaomi.go`), a key is
+exchanged with the cloud before every connection:
 
 ```go
 cloudUserRequest(url.User, "/v2/device/miss_get_vendor", params)
-// {"app_pubkey":"<客户端公钥>","did":"...","support_vendors":"TUTK_CS2_MTP"}
-// 老设备回退到 /device/devicepass
+// {"app_pubkey":"<client public key>","did":"...","support_vendors":"TUTK_CS2_MTP"}
+// older devices fall back to /device/devicepass
 ```
 
-这些请求用 `ssecurity` 派生 `signedNonce` 做 RC4 签名，而 `ssecurity` 来自
-**账号密码登录**（`serviceLogin` → `passToken` + `serviceToken`）。
+These requests are RC4-signed with a `signedNonce` derived from `ssecurity`, and
+`ssecurity` comes from **account-password login** (`serviceLogin` → `passToken` +
+`serviceToken`).
 
-**3. OAuth2 网关上没有这个接口。**
+**3. The OAuth2 gateway does not have this API.**
 
-| 请求 | 结果 |
+| Request | Result |
 | --- | --- |
 | `ha.api.io.mi.com/app/v2/device/miss_get_vendor` | 404 |
 | `ha.api.io.mi.com/app/v2/device/devicepass` | 404 |
 | `ha.api.io.mi.com/v2/device/miss_get_vendor` | 204 |
-| `ha.api.io.mi.com/随便一个不存在的路径` | 204 |
+| `ha.api.io.mi.com/any-path-that-does-not-exist` | 204 |
 
-**204 是这个网关对所有非 `/app/v2/*` 请求的兜底响应**，不代表接口存在——拿乱写的
-路径对照过。
+**204 is this gateway's catch-all response for every non-`/app/v2/*` request** and does
+not mean the API exists — this was cross-checked against made-up paths.
 
-**4. 拿 OAuth token 去敲 App 的接口域名会被拒。**
+**4. Knocking on the app's API domain with an OAuth token is rejected.**
 
 ```
 api.io.mi.com/app/v2/device/miss_get_vendor → 401 {"code":0,"message":"auth error"}
 ```
 
-它只认 `serviceToken` + RC4 签名。
+It only accepts `serviceToken` + RC4 signing.
 
-所以：小米把**控制面**（spec 接口）开给了 OAuth2，**数据面**（p2p 密钥交换）留在账号
-密码那套身份里。本项目只用 OAuth2，这条路就是死的——除非哪天小米把
-`miss_get_vendor` 挂到 `/app/v2/*` 下面。
+So: Xiaomi opened the **control plane** (the spec APIs) to OAuth2 and kept the **data
+plane** (the p2p key exchange) under the account-password identity. This project only
+uses OAuth2, so this road is a dead end — unless Xiaomi one day mounts
+`miss_get_vendor` under `/app/v2/*`.
 
-## 快照（2026-08-20，共 56 个型号）
+## Snapshot (2026-08-20, 56 models in total)
 
-名单会随小米发布新 spec 变化，用 `uv run python tools/scan_stream_models.py` 重新扫。
+The list changes as Xiaomi publishes new specs; rescan with `uv run python tools/scan_stream_models.py`.
 
-### 能直接拿到地址（43 个）
+### An address can be obtained directly (43)
 
-`start-rtsp-stream` / `start-hls-stream` 返回 URL。
+`start-rtsp-stream` / `start-hls-stream` return a URL.
 
 - `chuangmi.camera.021a04`
 - `chuangmi.camera.026c02`
@@ -129,9 +135,9 @@ api.io.mi.com/app/v2/device/miss_get_vendor → 401 {"code":0,"message":"auth er
 - `xiaomi.camera.c302o`
 - `xiaovv.camera.xvvi01`
 
-### 只提供 WebRTC 协商（13 个）
+### Only WebRTC negotiation is offered (13)
 
-只有 `initiate-webrtc-session`，要做 SDP offer/answer，拿不到现成地址，`mi action` 帮不上。
+There is only `initiate-webrtc-session`, which requires an SDP offer/answer exchange; no ready-made address can be obtained, and `mi action` cannot help.
 
 - `chuangmi.camera.061a03`
 - `chuangmi.camera.120ae1`

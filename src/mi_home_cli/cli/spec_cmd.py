@@ -1,4 +1,4 @@
-"""`mi spec` 命令：查设备有哪些能力。"""
+"""The `mi spec` commands: look up what a device can do."""
 from __future__ import annotations
 
 import shutil
@@ -7,15 +7,14 @@ from typing import Annotated, Optional
 
 import typer
 
-from ..i18n import t
 from .. import render
 from ..core.spec import DeviceSpec, SpecStore, unit_symbol
 from ..render import OutputFormat
 from .context import AppContext, OutputOption, pick_output
 from .device import resolve
 
-app = typer.Typer(help=t("设备能力（MIoT spec）"), no_args_is_help=True)
-cache_app = typer.Typer(help=t("spec 缓存"), no_args_is_help=True)
+app = typer.Typer(help="Device capabilities (MIoT spec)", no_args_is_help=True)
+cache_app = typer.Typer(help="Spec cache", no_args_is_help=True)
 app.add_typer(cache_app, name="cache")
 
 
@@ -24,7 +23,7 @@ def _ctx(ctx: typer.Context) -> AppContext:
 
 
 def load_spec(app_ctx: AppContext, target: str, *, refresh: bool = False):
-    """target 可以是设备（名称/别名/did），也可以直接是 urn。"""
+    """target may be a device (name / alias / did) or a urn directly."""
     store = SpecStore(app_ctx.profile, timeout=app_ctx.timeout)
     if target.startswith("urn:"):
         return None, store.get(target, refresh=refresh)
@@ -33,7 +32,7 @@ def load_spec(app_ctx: AppContext, target: str, *, refresh: bool = False):
 
 
 def describe_action_inputs(spec: DeviceSpec, action) -> str:
-    """把动作的入参 piid 翻成属性名，方便用户知道该传什么。"""
+    """Turn an action's input piids into property names, so the user knows what to pass."""
     names = []
     for piid in action.in_piids:
         prop = spec.property_at(action.siid, piid)
@@ -44,14 +43,14 @@ def describe_action_inputs(spec: DeviceSpec, action) -> str:
 def _property_rows(spec: DeviceSpec) -> list[dict[str, object]]:
     return [
         {
-            "服务": prop.service,
-            "属性": prop.name,
+            "Service": prop.service,
+            "Property": prop.name,
             "id": prop.ref,
-            "权限": prop.access_text(),
-            "类型": prop.format,
-            "取值": prop.range_text(),
-            "单位": unit_symbol(prop.unit) or "-",
-            "说明": prop.description,
+            "Access": prop.access_text(),
+            "Type": prop.format,
+            "Values": prop.range_text(),
+            "Unit": unit_symbol(prop.unit) or "-",
+            "Description": prop.description,
         }
         for prop in spec.properties
     ]
@@ -60,15 +59,16 @@ def _property_rows(spec: DeviceSpec) -> list[dict[str, object]]:
 @app.command("show")
 def spec_show(
     ctx: typer.Context,
-    target: Annotated[str, typer.Argument(help=t("设备名称、别名、did 或 urn"))],
-    siid: Annotated[Optional[int], typer.Option("--siid", help=t("只看某个服务"))] = None,
-    readable: Annotated[bool, typer.Option("--readable", help=t("只看可读属性"))] = False,
-    writable: Annotated[bool, typer.Option("--writable", help=t("只看可写属性"))] = False,
-    actions: Annotated[bool, typer.Option("--actions", help=t("改为列出动作"))] = False,
-    refresh: Annotated[bool, typer.Option("--refresh", help=t("忽略缓存重新拉取"))] = False,
+    target: Annotated[str, typer.Argument(help="Device name, alias, did or urn")],
+    siid: Annotated[Optional[int], typer.Option("--siid", help="Only this service")] = None,
+    readable: Annotated[bool, typer.Option("--readable", help="Only readable properties")] = False,
+    writable: Annotated[bool, typer.Option("--writable", help="Only writable properties")] = False,
+    actions: Annotated[bool, typer.Option("--actions", help="List actions instead")] = False,
+    refresh: Annotated[bool, typer.Option("--refresh", help="Ignore the cache and "
+                                                            "fetch again")] = False,
     output: OutputOption = None,
 ) -> None:
-    """列出设备的属性（或动作）。"""
+    """List a device's properties (or actions)."""
     app_ctx = _ctx(ctx)
     device, spec = load_spec(app_ctx, target, refresh=refresh)
     fmt = pick_output(app_ctx, output)
@@ -76,11 +76,11 @@ def spec_show(
     if actions:
         rows = [
             {
-                "服务": action.service,
-                "动作": action.name,
+                "Service": action.service,
+                "Action": action.name,
                 "id": action.ref,
-                "入参": describe_action_inputs(spec, action) or "-",
-                "说明": action.description,
+                "Inputs": describe_action_inputs(spec, action) or "-",
+                "Description": action.description,
             }
             for action in spec.actions
             if siid is None or action.siid == siid
@@ -92,17 +92,18 @@ def spec_show(
     if siid is not None:
         rows = [row for row in rows if row["id"].split(".")[0] == str(siid)]
     if readable:
-        rows = [row for row in rows if "r" in row["权限"]]
+        rows = [row for row in rows if "r" in row["Access"]]
     if writable:
-        rows = [row for row in rows if "w" in row["权限"]]
+        rows = [row for row in rows if "w" in row["Access"]]
     if fmt is OutputFormat.table:
-        # 取值范围那一列在窄终端里会把表挤爆，宽度不够就截断
+        # The value-range column blows the table up in narrow terminals; truncate when
+        # there is not enough width
         width = shutil.get_terminal_size((120, 24)).columns
         if width < 140:
             for row in rows:
-                text = str(row["取值"])
+                text = str(row["Values"])
                 if len(text) > 34:
-                    row["取值"] = text[:33] + "…"
+                    row["Values"] = text[:33] + "…"
         title = f"{device.label} · {spec.description}" if device else spec.description
         render.output(rows, fmt, title=title)
         return
@@ -112,11 +113,12 @@ def spec_show(
 @app.command("search")
 def spec_search(
     ctx: typer.Context,
-    target: Annotated[str, typer.Argument(help=t("设备名称、别名、did 或 urn"))],
-    keyword: Annotated[str, typer.Argument(help=t("关键词，匹配名称和说明"))],
+    target: Annotated[str, typer.Argument(help="Device name, alias, did or urn")],
+    keyword: Annotated[str, typer.Argument(help="Keyword, matched against names and "
+                                                "descriptions")],
     output: OutputOption = None,
 ) -> None:
-    """在一台设备的属性和动作里搜关键词。"""
+    """Search a device's properties and actions for a keyword."""
     app_ctx = _ctx(ctx)
     _, spec = load_spec(app_ctx, target)
     needle = keyword.lower()
@@ -125,24 +127,24 @@ def spec_search(
         if needle in f"{prop.full_name} {prop.description}".lower():
             rows.append(
                 {
-                    "类型": t("属性"),
-                    "名称": prop.full_name,
+                    "Type": "Property",
+                    "Name": prop.full_name,
                     "id": prop.ref,
-                    "权限": prop.access_text(),
-                    "说明": prop.description,
-                    "取值": prop.range_text(),
+                    "Access": prop.access_text(),
+                    "Description": prop.description,
+                    "Values": prop.range_text(),
                 }
             )
     for action in spec.actions:
         if needle in f"{action.full_name} {action.description}".lower():
             rows.append(
                 {
-                    "类型": t("动作"),
-                    "名称": action.full_name,
+                    "Type": "Action",
+                    "Name": action.full_name,
                     "id": action.ref,
-                    "权限": "-",
-                    "说明": action.description,
-                    "取值": "-",
+                    "Access": "-",
+                    "Description": action.description,
+                    "Values": "-",
                 }
             )
     render.output(rows, pick_output(app_ctx, output))
@@ -151,10 +153,10 @@ def spec_search(
 @app.command("dump")
 def spec_dump(
     ctx: typer.Context,
-    target: Annotated[str, typer.Argument(help=t("设备名称、别名、did 或 urn"))],
+    target: Annotated[str, typer.Argument(help="Device name, alias, did or urn")],
     output: OutputOption = None,
 ) -> None:
-    """输出完整 spec，方便喂给脚本。"""
+    """Dump the full spec, handy for feeding scripts."""
     app_ctx = _ctx(ctx)
     _, spec = load_spec(app_ctx, target)
     data = {
@@ -197,16 +199,12 @@ def spec_dump(
             for e in spec.events
         ],
     }
-    render.output(
-        data,
-        pick_output(app_ctx, output, default=OutputFormat.json),
-        data_keys=True,
-    )
+    render.output(data, pick_output(app_ctx, output, default=OutputFormat.json))
 
 
 @cache_app.command("info")
 def cache_info(ctx: typer.Context, output: OutputOption = None) -> None:
-    """看看缓存了哪些 spec。"""
+    """Show which specs are cached."""
     app_ctx = _ctx(ctx)
     spec_dir = app_ctx.profile.spec_dir
     rows = []
@@ -215,8 +213,8 @@ def cache_info(ctx: typer.Context, output: OutputOption = None) -> None:
         rows.append(
             {
                 "urn": path.stem,
-                "大小": f"{stat.st_size / 1024:.0f} KB",
-                "缓存于": time.strftime(
+                "Size": f"{stat.st_size / 1024:.0f} KB",
+                "Cached at": time.strftime(
                     "%Y-%m-%d %H:%M", time.localtime(stat.st_mtime)
                 ),
             }
@@ -226,7 +224,7 @@ def cache_info(ctx: typer.Context, output: OutputOption = None) -> None:
 
 @cache_app.command("clear")
 def cache_clear(ctx: typer.Context) -> None:
-    """清空 spec 缓存。"""
+    """Clear the spec cache."""
     app_ctx = _ctx(ctx)
     spec_dir = app_ctx.profile.spec_dir
     count = 0
@@ -234,4 +232,4 @@ def cache_clear(ctx: typer.Context) -> None:
         for path in spec_dir.glob("*.json"):
             path.unlink()
             count += 1
-    render.success(t("已清除 {count} 份 spec 缓存", count=count))
+    render.success(f"Cleared {count} cached spec(s)")

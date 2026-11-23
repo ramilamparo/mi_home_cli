@@ -1,4 +1,4 @@
-"""本地存储：权限、过期计算、device_id 持久化。"""
+"""Local storage: permissions, expiry calculation, device_id persistence."""
 import json
 import os
 import time
@@ -30,11 +30,11 @@ def test_auth_file_is_owner_only(profile: Profile):
 
 
 def test_roundtrip(profile: Profile):
-    profile.write_auth(_auth(uid="123", nickname="小明"))
+    profile.write_auth(_auth(uid="123", nickname="Zoë"))
     loaded = profile.require_auth()
     assert loaded.access_token == "AT"
     assert loaded.uid == "123"
-    assert loaded.nickname == "小明"
+    assert loaded.nickname == "Zoë"
 
 
 def test_require_auth_without_login(profile: Profile):
@@ -56,7 +56,7 @@ def test_expiry_math():
     assert not fresh.needs_refresh and not fresh.expired
 
     stale = _auth(obtained_at=now - 800, expires_in=1000)
-    assert stale.needs_refresh and not stale.expired  # 过了 70%，但还没到期
+    assert stale.needs_refresh and not stale.expired  # past 70% but not expired yet
 
     dead = _auth(obtained_at=now - 2000, expires_in=1000)
     assert dead.expired
@@ -64,14 +64,15 @@ def test_expiry_math():
 
 def test_identity_is_stable_and_ha_shaped(profile: Profile):
     identity = profile.identity("cn")
-    # 形态必须和 Home Assistant 一致，否则换 token 会被判 96002
+    # The shape must match Home Assistant, or the token exchange is rejected with 96002
     assert identity.device_id.startswith("ha.")
     assert len(identity.device_id) == 35
     assert identity.webhook_id.isdigit()
     assert identity.redirect_url == (
         f"http://homeassistant.local:8123/api/webhook/{identity.webhook_id}"
     )
-    # 同一个 profile 反复取要稳定，否则重试时参数对不上
+    # Repeated calls for the same profile must be stable, or the parameters do not match
+    # on a retry
     again = profile.identity("cn")
     assert (again.device_id, again.redirect_url) == (
         identity.device_id,
@@ -81,7 +82,7 @@ def test_identity_is_stable_and_ha_shaped(profile: Profile):
 
 def test_identity_differs_per_region(profile: Profile):
     assert profile.identity("cn").device_id != profile.identity("sg").device_id
-    # webhook_id 不随区域变
+    # webhook_id does not change with the region
     assert profile.identity("cn").webhook_id == profile.identity("sg").webhook_id
 
 
@@ -97,7 +98,8 @@ def test_pending_login_roundtrip(profile: Profile):
 def test_web_device_id_is_stable_and_private(profile: Profile):
     device = profile.web_device_id()
     assert device.startswith("wb_")
-    # 反复取要稳定，否则每次扫码又会在小米账号里多登记一台设备
+    # Repeated calls must be stable, or every scan registers one more device in the
+    # Xiaomi account
     assert profile.web_device_id() == device
     assert file_is_private(profile.scan_device_path)
 

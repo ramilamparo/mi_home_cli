@@ -1,11 +1,10 @@
-"""带登录态的会话：token 自动续期 + 已鉴权的 API 调用。"""
+"""A session with login state: automatic token renewal + authenticated API calls."""
 from __future__ import annotations
 
 from typing import Any
 
 import httpx
 
-from ..i18n import t
 from ..errors import CloudError, NetworkError, NotAuthenticated
 from ..store import AuthData, Profile
 from . import const
@@ -13,9 +12,10 @@ from .oauth import OAuthClient
 
 
 class Session:
-    """一个 profile 的运行时会话。
+    """The runtime session of one profile.
 
-    只在需要时刷新 token；刷新成功会立刻落盘，避免下次又刷一遍。
+    The token is only refreshed when needed; a successful refresh is persisted
+    immediately, so the next run does not refresh again.
     """
 
     def __init__(
@@ -54,7 +54,7 @@ class Session:
         return self._region_override or self.auth.region
 
     def refresh_token(self, *, force: bool = False) -> AuthData:
-        """需要时（或强制）刷新 access_token。"""
+        """Refresh the access_token when needed (or when forced)."""
         auth = self.auth
         if not force and not auth.needs_refresh:
             return auth
@@ -75,14 +75,16 @@ class Session:
     def access_token(self) -> str:
         auth = self.auth
         if auth.expired and not auth.refresh_token:
-            raise NotAuthenticated(t("access_token 已过期且没有 refresh_token"))
+            raise NotAuthenticated("The access_token has expired and there is no "
+                                   "refresh_token")
         if auth.needs_refresh:
             auth = self.refresh_token()
         return auth.access_token
 
     @property
     def _headers(self) -> dict[str, str]:
-        # 注意 Bearer 后面没有空格：米家这套接口就是这么校验的，加空格会 401。
+        # Note there is no space after Bearer: that is how this Mi Home API validates
+        # it, and adding a space gives 401.
         return {
             "Host": const.api_host(self.region),
             "X-Client-BizId": "haapi",
@@ -102,37 +104,31 @@ class Session:
                 method, url, params=params, json=json_body, headers=self._headers
             )
         except httpx.HTTPError as err:
-            raise NetworkError(t("请求 {path} 失败：{err}", path=path, err=err)) from err
+            raise NetworkError(f"Request to {path} failed: {err}") from err
         if response.status_code == 401 and retry_on_401:
-            # token 可能在服务端被提前作废，强制刷一次再试。
+            # The token may have been revoked early on the server side; force one
+            # refresh and retry.
             self.refresh_token(force=True)
             return self._request(
                 method, path, params=params, json_body=json_body,
                 retry_on_401=False,
             )
         if response.status_code == 401:
-            raise NotAuthenticated(t("云端返回 401，登录已失效"))
+            raise NotAuthenticated("The cloud returned 401; the login is no longer "
+                                   "valid")
         if response.status_code != 200:
             raise CloudError(
-                t(
-                    "{path} 返回 HTTP {status_code}",
-                    path=path,
-                    status_code=response.status_code,
-                ),
+                f"{path} returned HTTP {response.status_code}",
                 code=response.status_code,
             )
         try:
             res_obj = response.json()
         except ValueError as err:
-            raise CloudError(t("{path} 响应不是合法 JSON", path=path)) from err
+            raise CloudError(f"{path} response is not valid JSON") from err
         if res_obj.get("code") != 0:
             raise CloudError(
-                t(
-                    "{path} 返回 code={v0}：{v1}",
-                    path=path,
-                    v0=res_obj.get('code'),
-                    v1=res_obj.get('message') or '',
-                ),
+                f"{path} returned code={res_obj.get('code')}: "
+                f"{res_obj.get('message') or ''}",
                 code=res_obj.get("code"),
             )
         return res_obj

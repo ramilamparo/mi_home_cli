@@ -1,4 +1,4 @@
-"""`mi home unset` / `mi home select` 的接线测试。"""
+"""Wiring tests for `mi home unset` / `mi home select`."""
 import time
 
 import pytest
@@ -20,14 +20,14 @@ def env(tmp_path, monkeypatch):
             "uid": "1",
             "synced_at": int(time.time()),
             "homes": [
-                {"home_id": "h1", "home_name": "我家", "rooms": []},
-                {"home_id": "h2", "home_name": "老家", "rooms": []},
+                {"home_id": "h1", "home_name": "My Home", "rooms": []},
+                {"home_id": "h2", "home_name": "Old Home", "rooms": []},
             ],
             "devices": {
                 "d1": {
-                    "did": "d1", "name": "客厅灯", "model": "x.light.v1",
+                    "did": "d1", "name": "Living Room Light", "model": "x.light.v1",
                     "urn": "", "online": True, "home_id": "h1",
-                    "home_name": "我家", "room_id": "r1", "room_name": "客厅",
+                    "home_name": "My Home", "room_id": "r1", "room_name": "Living Room",
                 }
             },
         }
@@ -36,7 +36,7 @@ def env(tmp_path, monkeypatch):
 
 
 def _set_default(root):
-    result = CliRunner().invoke(app, ["home", "use", "我家"])
+    result = CliRunner().invoke(app, ["home", "use", "My Home"])
     assert result.exit_code == 0, result.output
 
 
@@ -46,22 +46,22 @@ def test_unset_clears_default_home(env):
 
     result = CliRunner().invoke(app, ["home", "unset"])
     assert result.exit_code == 0, result.output
-    assert "已取消默认家庭" in result.output
+    assert "Default home cleared" in result.output
     assert "home" not in read_config(env)
 
 
 def test_unset_when_none_set(env):
     result = CliRunner().invoke(app, ["home", "unset"])
     assert result.exit_code == 0, result.output
-    assert "当前没有设默认家庭" in result.output
+    assert "No default home is set" in result.output
 
 
 def test_select_sets_default_home(env, monkeypatch):
     monkeypatch.setattr("mi_home_cli.render.is_tty", lambda: True)
     result = CliRunner().invoke(app, ["home", "select"], input="2\n")
     assert result.exit_code == 0, result.output
-    assert "老家" in result.output
-    assert read_config(env)["home"] == {"id": "h2", "name": "老家"}
+    assert "Old Home" in result.output
+    assert read_config(env)["home"] == {"id": "h2", "name": "Old Home"}
 
 
 def test_select_can_unset(env, monkeypatch):
@@ -69,7 +69,7 @@ def test_select_can_unset(env, monkeypatch):
     monkeypatch.setattr("mi_home_cli.render.is_tty", lambda: True)
     result = CliRunner().invoke(app, ["home", "select"], input="0\n")
     assert result.exit_code == 0, result.output
-    assert "已取消默认家庭" in result.output
+    assert "Default home cleared" in result.output
     assert "home" not in read_config(env)
 
 
@@ -78,7 +78,7 @@ def test_select_marks_current_default(env, monkeypatch):
     monkeypatch.setattr("mi_home_cli.render.is_tty", lambda: True)
     result = CliRunner().invoke(app, ["home", "select"], input="1\n")
     assert result.exit_code == 0, result.output
-    assert "我家 *" in result.output
+    assert "My Home *" in result.output
 
 
 def test_select_rejects_out_of_range(env, monkeypatch):
@@ -96,4 +96,4 @@ def test_select_needs_tty(env, monkeypatch):
     monkeypatch.setattr("mi_home_cli.render.is_tty", lambda: False)
     result = CliRunner().invoke(app, ["home", "select"])
     assert isinstance(result.exception, UsageError)
-    assert "交互式终端" in result.exception.message
+    assert "interactive terminal" in result.exception.message

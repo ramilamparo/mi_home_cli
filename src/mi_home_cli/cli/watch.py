@@ -1,6 +1,7 @@
-"""`mi watch`：盯着设备的实时变化。
+"""`mi watch`: watch devices change in real time.
 
-走云端 MQTT 长连接，不是轮询——属性一变、事件一发、设备上下线，立刻出一行。
+Uses a long-lived cloud MQTT connection, not polling — a line appears the moment a
+property changes, an event fires, or a device goes online or offline.
 """
 from __future__ import annotations
 
@@ -11,7 +12,6 @@ from typing import Annotated, Any, Optional
 
 import typer
 
-from ..i18n import t
 from .. import render
 from ..core.mqtt import CloudMqtt, Message, topic_events, topic_props, topic_state
 from ..core.registry import Device
@@ -29,10 +29,11 @@ def _ctx(ctx: typer.Context) -> AppContext:
 def _load_specs(
     app_ctx: AppContext, devices: list[Device]
 ) -> dict[str, DeviceSpec]:
-    """把涉及到的 spec 都准备好，用来把 siid/piid 翻成属性名。
+    """Prepare all specs involved, used to turn siid/piid into property names.
 
-    第一次会逐个去 miot-spec.org 拉，之后走缓存。拉不到的设备退化成显示
-    裸的 siid.piid，不影响 watch 本身。
+    The first time they are fetched one by one from miot-spec.org, afterwards the cache
+    is used. Devices whose spec cannot be fetched degrade to showing the bare
+    siid.piid, which does not affect watch itself.
     """
     specs: dict[str, DeviceSpec] = {}
     urns = {device.urn for device in devices}
@@ -41,12 +42,12 @@ def _load_specs(
         urn for urn in urns if not store._cache_path(urn).exists()  # noqa: SLF001
     ]
     if missing:
-        render.info(t("[dim]首次运行，正在拉取 {n_missing} 份 spec…[/dim]", n_missing=len(missing)))
+        render.info(f"[dim]First run, fetching {len(missing)} spec(s)…[/dim]")
     for urn in urns:
         try:
             specs[urn] = store.get(urn)
-        except Exception as err:  # 单个 spec 挂了不该拖垮整个 watch
-            render.warn(t("spec 获取失败（{urn}）：{err}", urn=urn, err=err))
+        except Exception as err:  # one broken spec must not bring down the whole watch
+            render.warn(f"Failed to fetch spec ({urn}): {err}")
     return specs
 
 
@@ -56,19 +57,19 @@ def _describe(
     spec: DeviceSpec | None,
     previous: dict[tuple[str, int, int], Any],
 ) -> dict[str, Any] | None:
-    """把一条推送变成可展示的一行；被过滤掉时返回 None。"""
+    """Turn one pushed message into a displayable row; returns None when it is filtered out."""
     stamp = time.strftime("%H:%M:%S")
     base = {
-        "时间": stamp,
-        "设备": device.label,
-        "房间": device.room_name or "-",
+        "Time": stamp,
+        "Device": device.label,
+        "Room": device.room_name or "-",
     }
     if message.kind == "state":
         return {
             **base,
-            "类型": t("上下线"),
-            "名称": "-",
-            "变化": t("上线") if message.state == "online" else t("离线"),
+            "Type": "Online state",
+            "Name": "-",
+            "Change": "online" if message.state == "online" else "offline",
             "_json": {"kind": "state", "state": message.state},
         }
     if message.kind == "event":
@@ -85,9 +86,9 @@ def _describe(
         name = event.full_name if event else f"{message.siid}.{message.iid}"
         return {
             **base,
-            "类型": t("事件"),
-            "名称": event.description if event else name,
-            "变化": json.dumps(message.arguments, ensure_ascii=False)
+            "Type": "Event",
+            "Name": event.description if event else name,
+            "Change": json.dumps(message.arguments, ensure_ascii=False)
             if message.arguments
             else "-",
             "_json": {
@@ -112,9 +113,9 @@ def _describe(
     )
     return {
         **base,
-        "类型": t("属性"),
-        "名称": prop.description if prop else name,
-        "变化": f"{shown_old} → {shown_new}" if shown_old is not None else shown_new,
+        "Type": "Property",
+        "Name": prop.description if prop else name,
+        "Change": f"{shown_old} → {shown_new}" if shown_old is not None else shown_new,
         "_json": {
             "kind": "prop",
             "property": name,
@@ -127,34 +128,36 @@ def _describe(
 def watch(
     ctx: typer.Context,
     devices: Annotated[
-        Optional[list[str]], typer.Argument(help=t("要盯的设备，不给就盯全部"))
+        Optional[list[str]], typer.Argument(help="Devices to watch; all of them when "
+                                                 "omitted")
     ] = None,
     props: Annotated[
         Optional[list[str]],
-        typer.Option("--prop", help=t("只看这些属性，可重复，如 --prop on")),
+        typer.Option("--prop", help="Only these properties, repeatable, e.g. --prop on"),
     ] = None,
     events: Annotated[
-        bool, typer.Option("--events/--no-events", help=t("是否包含事件"))
+        bool, typer.Option("--events/--no-events", help="Include events")
     ] = True,
     state: Annotated[
-        bool, typer.Option("--state/--no-state", help=t("是否包含上下线"))
+        bool, typer.Option("--state/--no-state", help="Include online/offline changes")
     ] = True,
     all_updates: Annotated[
         bool,
         typer.Option(
             "--all-updates",
-            help=t("连值没变的周期上报也显示（默认只显示真的变化）"),
+            help="Also show periodic reports whose value did not change (only real "
+                 "changes by default)",
         ),
     ] = False,
     exit_after: Annotated[
-        Optional[int], typer.Option("--exit-after", help=t("收到 N 条后退出"))
+        Optional[int], typer.Option("--exit-after", help="Exit after N messages")
     ] = None,
     duration: Annotated[
-        Optional[float], typer.Option("--duration", help=t("盯多少秒后退出"))
+        Optional[float], typer.Option("--duration", help="Exit after this many seconds")
     ] = None,
     output: OutputOption = None,
 ) -> None:
-    """实时盯设备的属性变化、事件和上下线。Ctrl-C 退出。"""
+    """Watch property changes, events and online/offline changes live. Ctrl-C to quit."""
     app_ctx = _ctx(ctx)
     registry = load_registry(app_ctx)
     scope = app_ctx.home_filter()
@@ -164,7 +167,7 @@ def watch(
     else:
         targets = registry.filter(**scope)
     if not targets:
-        raise UsageError(t("没有可盯的设备"))
+        raise UsageError("No devices to watch")
 
     specs = _load_specs(app_ctx, targets)
     by_did = {device.did: device for device in targets}
@@ -177,12 +180,14 @@ def watch(
         if events:
             topics.append(topic_events(device.did))
         if state and not device.did.startswith(("blt.", "proxy.")):
-            # 蓝牙和网关子设备云端不发上下线，订了也没用
+            # The cloud sends no online/offline state for Bluetooth and gateway sub-
+            # devices, so subscribing is pointless
             topics.append(topic_state(device.did))
 
     with app_ctx.session() as session:
         identity = app_ctx.profile.identity(session.region)
-        # 先确保 token 是新的，长连接期间也用它作为密码
+        # Make sure the token is fresh first; it is also the password for the long-lived
+        # connection
         session.access_token()
         client = CloudMqtt(
             region=session.region,
@@ -191,16 +196,14 @@ def watch(
             debug=app_ctx.verbose,
             on_note=lambda text: render.info(f"[dim]{text}[/dim]"),
             on_state_change=lambda ok: render.info(
-                t("[dim]已连接[/dim]") if ok else t("[yellow]连接断开，正在重连…[/yellow]")
+                "[dim]Connected[/dim]" if ok else "[yellow]Connection lost, "
+                                            "reconnecting…[/yellow]"
             ),
         )
         client.subscribe(topics)
         render.info(
-            t(
-                "[dim]盯着 {n_targets} 台设备（{n_topics} 个订阅），Ctrl-C 退出[/dim]",
-                n_targets=len(targets),
-                n_topics=len(topics),
-            )
+            f"[dim]Watching {len(targets)} device(s) ({len(topics)} subscription(s)), "
+            "Ctrl-C to quit[/dim]"
         )
         previous: dict[tuple[str, int, int], Any] = {}
         seen = 0
@@ -218,7 +221,8 @@ def watch(
                 device = by_did.get(message.did)
                 if device is None:
                     continue
-                # 设备会周期性重报同一个值，默认不刷屏——watch 看的是变化
+                # Devices periodically re-report the same value; do not flood the screen
+                # by default — watch is about changes
                 if (
                     not all_updates
                     and message.kind == "prop"
@@ -245,19 +249,19 @@ def watch(
             render.info("")
         finally:
             client.stop()
-        tail = t("，另有 {repeats} 条值未变的上报已跳过", repeats=repeats) if repeats else ""
-        render.info(t("[dim]共 {seen} 条{tail}[/dim]", seen=seen, tail=tail))
+        tail = f"; {repeats} more report(s) with unchanged values were skipped" if repeats else ""
+        render.info(f"[dim]{seen} message(s) in total{tail}[/dim]")
 
 
 def _emit(row: dict[str, Any], fmt: OutputFormat, device: Device) -> None:
-    """流式输出：一条一行，表格在这里没意义。"""
+    """Streaming output: one line per message; a table makes no sense here."""
     payload = row.pop("_json")
     if fmt in (OutputFormat.json, OutputFormat.yaml):
         print(
             json.dumps(
                 {
                     "ts": int(time.time()),
-                    "time": row["时间"],
+                    "time": row["Time"],
                     "did": device.did,
                     "device": device.label,
                     "room": device.room_name,
@@ -270,12 +274,12 @@ def _emit(row: dict[str, Any], fmt: OutputFormat, device: Device) -> None:
         return
     if fmt is OutputFormat.plain:
         print(
-            f"{row['时间']}\t{device.label}\t{row['名称']}\t{row['变化']}",
+            f"{row['Time']}\t{device.label}\t{row['Name']}\t{row['Change']}",
             flush=True,
         )
         return
-    icon = {t("属性"): "·", t("事件"): "!", t("上下线"): "~"}.get(str(row["类型"]), "·")
+    icon = {"Property": "·", "Event": "!", "Online state": "~"}.get(str(row["Type"]), "·")
     render.stream(
-        f"[dim]{row['时间']}[/dim] {icon} [cyan]{row['设备']}[/cyan]"
-        f" [dim]{row['房间']}[/dim] {row['名称']}  {row['变化']}"
+        f"[dim]{row['Time']}[/dim] {icon} [cyan]{row['Device']}[/cyan] [dim]"
+        f"{row['Room']}[/dim] {row['Name']}  {row['Change']}"
     )

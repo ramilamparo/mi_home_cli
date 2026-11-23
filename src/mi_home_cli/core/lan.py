@@ -1,20 +1,23 @@
-"""局域网直连（miIO 协议）。
+"""Direct LAN control (the miIO protocol).
 
-UDP 54321，包结构：
+UDP 54321, packet layout:
 
-    0-1    魔数 0x2131
-    2-3    整包长度
-    4-7    unknown（发包时填 0；但设备回包里不一定是 0，实测有设备填 16）
+    0-1    magic 0x2131
+    2-3    total packet length
+    4-7    unknown (0 when sending; not necessarily 0 in device replies, one
+           device was seen to put 16 there)
     8-11   did
-    12-15  设备自己的时间戳
-    16-31  md5 校验位（计算时这 16 字节先填 token）
-    32-    AES-128-CBC 加密的 JSON-RPC，PKCS7 填充
+    12-15  the device's own timestamp
+    16-31  md5 checksum (these 16 bytes hold the token while it is computed)
+    32-    JSON-RPC encrypted with AES-128-CBC, PKCS7 padding
 
-密钥 = md5(token)，IV = md5(md5(token) + token)。握手（hello）包是 32 字节
-全 ff，设备回一个同样格式的包，里面带它当前的时间戳——之后每个请求都要带上
-按这个时间戳推算的值，否则设备会丢弃。
+key = md5(token), IV = md5(md5(token) + token). The handshake (hello) packet is 32
+bytes of ff; the device replies with a packet of the same format that carries its
+current timestamp — every later request has to carry a value derived from that
+timestamp, or the device drops it.
 
-只能控直连路由器的 WiFi/有线设备；蓝牙 Mesh、ZigBee 那些走网关的设备不行。
+Only WiFi/wired devices connected directly to the router can be controlled;
+devices behind a gateway (Bluetooth Mesh, ZigBee) cannot.
 """
 from __future__ import annotations
 
@@ -30,11 +33,11 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
-from ..i18n import t
 from ..errors import DeviceOffline, MiCliError, NetworkError
 
 PORT = 54321
-# 设备处理 miot-spec 请求比握手慢得多，握手几十毫秒，属性读写可能要几秒
+# Devices handle miot-spec requests far more slowly than the handshake: tens of
+# milliseconds for the handshake, possibly seconds for property reads/writes
 CALL_TIMEOUT = 3.0
 MAGIC = 0x2131
 HEADER_LEN = 32
@@ -48,16 +51,16 @@ def _md5(data: bytes) -> bytes:
 
 @dataclass
 class Endpoint:
-    """一台设备在局域网上的位置和它的时钟。"""
+    """A device's location on the LAN, and its clock."""
 
     did: str
     ip: str
-    stamp: int  # 设备自己报的时间戳
-    offset: float  # 本机时间 - 设备时间戳，用来推算后续请求该填什么
-    elapsed_ms: float = 0.0  # 从发出探测到收到这台设备应答的耗时
+    stamp: int  # the timestamp the device itself reports
+    offset: float  # local time - device timestamp, used to work out what later requests must carry
+    elapsed_ms: float = 0.0  # time from sending the probe to receiving this device's reply
     port: int = PORT
-    # 广播扫描时这个耗时包含了排队等待，不是往返延迟；只有单播探活
-    # （ping）测出来的才是真延迟
+    # In a broadcast scan this time includes queueing and is not round-trip
+    # latency; only a unicast probe (ping) measures real latency
     is_rtt: bool = False
 
     def current_stamp(self) -> int:
@@ -73,9 +76,10 @@ def _parse_hello(
 ) -> Endpoint | None:
     if len(data) < HEADER_LEN or data[:2] != b"\x21\x31":
         return None
-    # did 是 4 字节。它前面那 4 字节（unknown）在回包里不一定是 0——实测某设备
-    # 填的是 16——所以不能把 8 个字节当成一个整数读，否则 did 会大出天际、
-    # 永远匹配不上云端清单。
+    # did is 4 bytes. The 4 bytes before it (unknown) are not necessarily 0 in a
+    # reply — one device was seen to put 16 there — so the 8 bytes must not be read
+    # as one integer, or the did becomes astronomically large and never matches
+    # the cloud's list.
     did = struct.unpack(">I", data[8:12])[0]
     stamp = struct.unpack(">I", data[12:16])[0]
     return Endpoint(
@@ -90,7 +94,7 @@ def _parse_hello(
 
 
 def discover(timeout: float = 3.0, address: str = BROADCAST) -> dict[str, Endpoint]:
-    """广播 hello，收集应答。返回 did → Endpoint。"""
+    """Broadcast hello and collect the replies. Returns did → Endpoint."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     sock.settimeout(0.3)
@@ -100,7 +104,7 @@ def discover(timeout: float = 3.0, address: str = BROADCAST) -> dict[str, Endpoi
         try:
             sock.sendto(HELLO, (address, PORT))
         except OSError as err:
-            raise NetworkError(t("广播失败：{err}", err=err)) from err
+            raise NetworkError(f"Broadcast failed: {err}") from err
         deadline = time.time() + timeout
         while time.time() < deadline:
             try:
@@ -118,7 +122,7 @@ def discover(timeout: float = 3.0, address: str = BROADCAST) -> dict[str, Endpoi
 
 
 def ping(ip: str, timeout: float = 0.6, port: int = PORT) -> Endpoint | None:
-    """朝一个已知 IP 发 hello，用来确认缓存里的地址还有效。"""
+    """Send hello to a known IP, to confirm that a cached address is still valid."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.settimeout(timeout)
     try:
@@ -135,11 +139,12 @@ def ping(ip: str, timeout: float = 0.6, port: int = PORT) -> Endpoint | None:
 
 
 class LanDevice:
-    """一台可以直连的设备。"""
+    """A device that can be controlled directly."""
 
     def __init__(self, did: str, token: str, endpoint: Endpoint) -> None:
         if len(token) != 32:
-            raise MiCliError(t("token 长度不对（应为 32 个十六进制字符）：{token!r}", token=token))
+            raise MiCliError("Wrong token length (expected 32 hex characters): "
+                             f"{token!r}")
         self.did = did
         self.endpoint = endpoint
         self._token = bytes.fromhex(token)
@@ -150,7 +155,7 @@ class LanDevice:
         )
         self._msg_id = int(time.time()) % 10000
 
-    # ---------- 组包 / 解包 ----------
+    # ---------- packing / unpacking ----------
 
     def _build(self, payload: dict[str, Any]) -> bytes:
         clear = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -169,30 +174,31 @@ class LanDevice:
             self._token,
         )
         packet[HEADER_LEN:] = body
-        # 校验位是「token 填在 [16:32] 时整包的 md5」
+        # The checksum is "the md5 of the whole packet with the token placed at [16:32]"
         packet[16:32] = _md5(bytes(packet))
         return bytes(packet)
 
     def _parse(self, data: bytes) -> dict[str, Any]:
         if len(data) < HEADER_LEN or data[:2] != b"\x21\x31":
-            raise MiCliError(t("收到的不是 miIO 包"))
+            raise MiCliError("Received something that is not a miIO packet")
         total = struct.unpack(">H", data[2:4])[0]
         buffer = bytearray(data[:total])
         checksum = bytes(buffer[16:32])
         buffer[16:32] = self._token
         if _md5(bytes(buffer)) != checksum:
             raise MiCliError(
-                t("校验失败，token 不对"),
-                hint=t("`mi device sync` 刷新一下设备清单，token 会随重新配网变化"),
+                "Checksum mismatch: wrong token",
+                hint="Refresh the device list with `mi device sync`; the token "
+                     "changes when a device is re-paired",
             )
         decryptor = self._cipher.decryptor()
         padded = decryptor.update(bytes(buffer[HEADER_LEN:total])) + decryptor.finalize()
         unpadder = padding.PKCS7(algorithms.AES128.block_size).unpadder()
         clear = unpadder.update(padded) + unpadder.finalize()
-        # 有些设备会在 JSON 末尾多塞一个 \0
+        # Some devices append an extra \0 to the JSON
         return json.loads(clear.rstrip(b"\x00"))
 
-    # ---------- 调用 ----------
+    # ---------- calls ----------
 
     def call(
         self,
@@ -215,35 +221,32 @@ class LanDevice:
                 except socket.timeout:
                     continue
                 except OSError as err:
-                    raise NetworkError(
-                        t(
-                            "发往 {ip} 失败：{err}",
-                            ip=self.endpoint.ip,
-                            err=err,
-                        )
-                    ) from err
+                    raise NetworkError(f"Sending to {self.endpoint.ip} failed: {err}") from err
                 response = self._parse(data)
                 if response.get("id") != payload["id"]:
-                    # 上一次超时的迟到响应，丢掉继续等
+                    # A late response to the previous timed-out request; drop it and
+                    # keep waiting
                     continue
                 if "error" in response:
                     error = response["error"]
                     raise MiCliError(
-                        t("设备返回错误：{v0}", v0=error.get('message', error))
+                        f"The device returned an error: {error.get('message', error)}"
                     )
                 return response.get("result")
             raise DeviceOffline(
-                t("{ip} 在 {v0:.0f} 秒内没有响应", ip=self.endpoint.ip, v0=timeout * retries),
+                f"{self.endpoint.ip} did not respond within {timeout * retries:.0f} "
+                "seconds",
                 hint=(
-                    t(
-                        "设备收不下这个包就不会回应答：token 不对（重新配网后会变，跑 `mi device sync` 刷新）、设备刚离线、或换了 IP（`mi lan discover` 重扫）",
-                    )
+                    "A device does not reply to a packet it cannot accept: wrong "
+                    "token (it changes after re-pairing; refresh with `mi device "
+                    "sync`), the device just went offline, or its IP changed (rescan "
+                    "with `mi lan discover`)"
                 ),
             )
         finally:
             sock.close()
 
-    # ---------- 和云端一致的接口 ----------
+    # ---------- the same interface as the cloud ----------
 
     def get_props(self, params: list[dict[str, Any]]) -> list[dict[str, Any]]:
         result = self.call(

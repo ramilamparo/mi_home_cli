@@ -1,6 +1,7 @@
-"""本地配置与凭据存储。
+"""Local storage of configuration and credentials.
 
-目录结构见 docs/design.md §3.1。含密文件一律 0600、目录 0700。
+For the directory layout see docs/design.md §3.1. Files containing secrets are
+always 0600 and directories 0700.
 """
 from __future__ import annotations
 
@@ -15,7 +16,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .i18n import t
 from .core import const
 from .core.const import DEFAULT_REGION, TOKEN_REFRESH_RATIO
 from .errors import MiCliError, NotAuthenticated
@@ -25,7 +25,7 @@ APP_DIR_NAME = "mi-home-cli"
 
 
 def config_dir() -> Path:
-    """配置根目录，可用 MI_HOME_CONFIG_DIR 覆盖。"""
+    """The config root directory; can be overridden with MI_HOME_CONFIG_DIR."""
     override = os.environ.get(ENV_CONFIG_DIR)
     if override:
         return Path(override).expanduser()
@@ -39,7 +39,8 @@ def _write_private_json(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     os.chmod(path.parent, 0o700)
     tmp = path.with_suffix(path.suffix + ".tmp")
-    # 先以 0600 建文件再写，避免内容短暂可读。
+    # Create the file with 0600 before writing, so its content is never briefly
+    # readable.
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as fp:
         json.dump(data, fp, ensure_ascii=False, indent=2)
@@ -55,11 +56,11 @@ def _read_json(path: Path) -> dict[str, Any] | None:
         with path.open(encoding="utf-8") as fp:
             return json.load(fp)
     except (OSError, json.JSONDecodeError) as err:
-        raise MiCliError(t("读取 {path} 失败：{err}", path=path, err=err)) from err
+        raise MiCliError(f"Failed to read {path}: {err}") from err
 
 
 def file_is_private(path: Path) -> bool:
-    """文件是否只有属主可读写。"""
+    """Whether only the owner can read and write the file."""
     if not path.exists():
         return True
     mode = path.stat().st_mode
@@ -68,7 +69,7 @@ def file_is_private(path: Path) -> bool:
 
 @dataclass
 class AuthData:
-    """一个 profile 的登录态。"""
+    """The login state of one profile."""
 
     access_token: str
     refresh_token: str
@@ -85,7 +86,7 @@ class AuthData:
 
     @property
     def refresh_at(self) -> int:
-        """到这个时间点就该刷新了。"""
+        """From this point in time on it should be refreshed."""
         return self.obtained_at + int(self.expires_in * TOKEN_REFRESH_RATIO)
 
     @property
@@ -122,15 +123,15 @@ class AuthData:
                 nickname=data.get("nickname"),
             )
         except KeyError as err:
-            raise NotAuthenticated(t("登录信息不完整，缺少 {err}", err=err)) from err
+            raise NotAuthenticated(f"The login data is incomplete: missing {err}") from err
 
 
 @dataclass
 class Identity:
-    """一次登录里必须前后一致的三个值。
+    """The three values that must stay consistent throughout one login.
 
-    授权时用什么，换 token 时就得用什么，服务端会比对；对不上会返回
-    96002 invalid request。
+    Whatever is used for authorization must be used for the token exchange; the server
+    compares them, and a mismatch returns 96002 invalid request.
     """
 
     install_id: str
@@ -141,7 +142,7 @@ class Identity:
 
 @dataclass
 class Profile:
-    """一个账号/区域配置。"""
+    """One account/region configuration."""
 
     name: str
     root: Path = field(default_factory=config_dir)
@@ -167,7 +168,7 @@ class Profile:
         return self.path / "aliases.json"
 
     def write_devices(self, data: dict[str, Any]) -> None:
-        # 设备清单里带局域网 token，按凭据同等对待
+        # The device list contains LAN tokens; treat it like credentials
         _write_private_json(self.devices_path, data)
 
     @property
@@ -198,7 +199,7 @@ class Profile:
     def require_auth(self) -> AuthData:
         auth = self.read_auth()
         if auth is None:
-            raise NotAuthenticated(t("profile `{name}` 尚未登录", name=self.name))
+            raise NotAuthenticated(f"Profile `{self.name}` is not logged in")
         return auth
 
     def write_auth(self, auth: AuthData) -> None:
@@ -222,11 +223,12 @@ class Profile:
         return self.path / "pending.json"
 
     def identity(self, region: str) -> "Identity":
-        """本机在小米 OAuth 侧的身份，首次使用时生成并固定下来。
+        """This machine's identity towards Xiaomi's OAuth, generated on first use and then fixed.
 
-        形态照抄 Home Assistant 米家集成：webhook_id 是随机 64 位整数，
-        device_id 是 `ha.` 加 32 位 hex。换 device_id 不影响能否登录，但会在
-        小米侧多出一条设备记录，所以持久化。
+        The shape is copied from the Home Assistant Xiaomi Home integration: webhook_id is
+        a random 64-bit integer and device_id is `ha.` plus 32 hex chars. Changing the
+        device_id does not affect whether login works, but it leaves one more device record
+        on Xiaomi's side, so it is persisted.
         """
         data = _read_json(self.identity_path) or {}
         install_id = data.get("install_id") or uuid.uuid4().hex
@@ -249,7 +251,7 @@ class Profile:
         )
 
     def write_pending(self, data: dict[str, Any]) -> None:
-        """记下这次登录用的参数，好让 `mi auth exchange` 用同样的参数重试。"""
+        """Remember the parameters of this login, so `mi auth exchange` can retry with the same ones."""
         _write_private_json(self.pending_path, data)
 
     def read_pending(self) -> dict[str, Any] | None:
@@ -263,11 +265,13 @@ class Profile:
         return self.path / "scan_device.json"
 
     def web_device_id(self) -> str:
-        """扫码登录复用的稳定 web `deviceId`，首次生成后固定下来。
+        """The stable web `deviceId` reused by QR-code login; generated once and then fixed.
 
-        小米账号登录页第一次访问会下发一个随机 `deviceId`，并按它在「登录设备」里
-        登记一台 web 设备（按浏览器 UA 显示成 Chrome）。每次扫码都用新 `deviceId`
-        就会越登记越多；把它固定住并每次带上，小米就认成同一台，不再新增。
+        On first access the Xiaomi account login page issues a random `deviceId` and
+        registers a web device under "logged-in devices" according to it (shown as Chrome,
+        based on the browser UA). A new `deviceId` on every scan would keep adding more;
+        keeping it fixed and sending it every time makes Xiaomi treat it as the same device
+        and add no new one.
         """
         data = _read_json(self.scan_device_path) or {}
         device = data.get("device_id")

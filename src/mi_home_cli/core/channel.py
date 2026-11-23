@@ -1,13 +1,13 @@
-"""控制通道：云端 / 局域网 / 自动。
+"""Control channels: cloud / LAN / auto.
 
-上层命令不关心走的是哪条路，只调 get_props / set_props / call_action。
+Commands above do not care which path is taken; they only call
+get_props / set_props / call_action.
 """
 from __future__ import annotations
 
 import time
 from typing import Any, Protocol
 
-from ..i18n import t
 from ..errors import DeviceOffline, MiCliError
 from ..store import Profile
 from .cloud import CloudApi
@@ -15,14 +15,17 @@ from .lan import Endpoint, LanDevice, discover, ping
 from .registry import Device
 from .session import Session
 
-# 只有直连路由器的设备能走局域网；蓝牙 Mesh / ZigBee 那些经网关接入的不行。
-# 取值来自上游对 connect_type（云端的 pid 字段）的判断。
+# Only devices connected directly to the router can use the LAN; those joining
+# through a gateway (Bluetooth Mesh / ZigBee) cannot. The values come from
+# upstream's handling of connect_type (the cloud's pid field).
 LAN_CAPABLE_TYPES = frozenset({0, 8, 12, 23})
-# 缓存里的 IP 多久之内直接试，超了就当过期（设备可能换了 IP）
+# For how long a cached IP is tried directly; beyond that it counts as stale (the device
+# may have changed IP)
 LAN_CACHE_TTL = 24 * 3600
-# 某台设备在局域网上干不了活（比如老固件不认 get_properties）就记下来，
-# 这段时间内 auto 模式直接走云端，不再每条命令都白试一次。固件升级可能会
-# 补上支持，所以会过期；`mi lan discover` 也会清掉这个标记。
+# When a device cannot do the job over the LAN (e.g. old firmware that does not
+# know get_properties), remember it; for this long auto mode goes straight to
+# the cloud and does not waste an attempt on every command. A firmware upgrade
+# may add support, so the mark expires; `mi lan discover` clears it as well.
 LAN_FAILURE_TTL = 7 * 24 * 3600
 
 
@@ -39,7 +42,7 @@ class DeviceChannel(Protocol):
 
 
 class CloudChannel:
-    """走米家云端。"""
+    """Through the Mi Home cloud."""
 
     name = "cloud"
 
@@ -59,11 +62,12 @@ class CloudChannel:
 
 
 class AutoChannel:
-    """局域网优先，失败回落云端。
+    """LAN first, falling back to the cloud on failure.
 
-    「找得到设备」不等于「设备愿意在局域网上干活」——实测有设备握手正常、
-    却对 get_properties 回 user ack timeout。所以回落必须做在每次调用上，
-    只在定位阶段回落是不够的。
+    "The device can be found" is not the same as "the device is willing to work over
+    the LAN" — in testing some devices handshake fine yet answer get_properties with
+    user ack timeout. So the fallback has to happen on every call; falling back only at
+    the locating stage is not enough.
     """
 
     name = "auto"
@@ -85,36 +89,34 @@ class AutoChannel:
             try:
                 return call(self._lan)
             except MiCliError as err:
-                # 这台设备本次不再试局域网，并记到缓存里，让后续命令也别白试
+                # Do not try the LAN again for this device in this run, and record it in
+                # the cache so later commands do not try in vain either
                 self._lan = None
                 if self._on_failure:
                     self._on_failure(err.message)
                 if self._on_note:
                     self._on_note(
-                        t(
-                            "[dim]局域网{action}失败（{message}），改走云端[/dim]",
-                            action=action,
-                            message=err.message,
-                        )
+                        f"[dim]LAN {action} failed ({err.message}), falling back to "
+                        "the cloud[/dim]"
                     )
         return call(self._cloud)
 
     def get_props(self, params: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return self._run(t("读取"), lambda channel: channel.get_props(params))
+        return self._run("read", lambda channel: channel.get_props(params))
 
     def set_props(self, params: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return self._run(t("写入"), lambda channel: channel.set_props(params))
+        return self._run("write", lambda channel: channel.set_props(params))
 
     def call_action(
         self, did: str, siid: int, aiid: int, values: list[Any]
     ) -> dict[str, Any]:
         return self._run(
-            t("调用动作"), lambda channel: channel.call_action(did, siid, aiid, values)
+            "action call", lambda channel: channel.call_action(did, siid, aiid, values)
         )
 
 
 class LanChannel:
-    """直连设备。"""
+    """Directly to the device."""
 
     name = "lan"
 
@@ -146,7 +148,7 @@ def record_lan_failure(profile: Profile, did: str, reason: str) -> None:
 
 
 def lan_failure(profile: Profile, did: str) -> tuple[int, str] | None:
-    """这台设备最近一次局域网调用失败的时间和原因，没有或已过期返回 None。"""
+    """Time and reason of this device's most recent failed LAN call; None if there is none or it has expired."""
     entry = profile.read_lan().get(did) or {}
     failed_at = entry.get("failed_at")
     if not failed_at or time.time() - failed_at > LAN_FAILURE_TTL:
@@ -169,9 +171,10 @@ def lan_capable(device: Device) -> bool:
 def locate(
     profile: Profile, device: Device, *, rediscover: bool = True
 ) -> Endpoint | None:
-    """找出设备在局域网上的地址。
+    """Find the device's address on the LAN.
 
-    先试缓存里的 IP（一次 unicast hello，几十毫秒），不行再广播扫一遍。
+    Try the cached IP first (one unicast hello, tens of milliseconds); if that fails,
+    do a broadcast scan.
     """
     cache = profile.read_lan()
     entry = cache.get(device.did)
@@ -201,10 +204,11 @@ def open_device_channel(
     mode: str = "cloud",
     on_note: Any = None,
 ) -> DeviceChannel:
-    """按 --channel 选一条通道。
+    """Pick a channel according to --channel.
 
-    auto：能直连就直连，任何一步不成立就静默回落云端——回落是常态，不该吵。
-    lan：只走局域网，不成立就报错说清楚为什么。
+    auto: go direct when possible and silently fall back to the cloud whenever any step
+    does not hold — falling back is the norm and should not be noisy.
+    lan: LAN only; when it does not work, raise an error that says clearly why.
     """
     cloud = CloudChannel(CloudApi(session))
     if mode == "cloud":
@@ -212,47 +216,37 @@ def open_device_channel(
 
     if not lan_capable(device):
         reason = (
-            t("没有局域网 token")
+            "no LAN token"
             if not device.token
-            else t(
-                "connect_type={connect_type}，不是直连路由器的设备（蓝牙 Mesh / ZigBee 要走网关）",
-                connect_type=device.connect_type,
-            )
+            else f"connect_type={device.connect_type}: the device is not connected to "
+                 "the router directly (Bluetooth Mesh / ZigBee go through a gateway)"
         )
         if mode == "lan":
-            raise MiCliError(
-                t(
-                    "{label} 不能局域网直连：{reason}",
-                    label=device.label,
-                    reason=reason,
-                )
-            )
+            raise MiCliError(f"{device.label} cannot be controlled over the LAN: "
+                             f"{reason}")
         return cloud
 
     failure = lan_failure(profile, device.did)
     if failure and mode == "auto":
-        # 之前试过、这台设备在局域网上干不了活，别再浪费一轮往返
+        # Tried before and this device cannot do the job over the LAN; do not waste
+        # another round trip
         if on_note:
-            on_note(t("[dim]跳过局域网（上次失败：{v0}），走云端[/dim]", v0=failure[1]))
+            on_note(f"[dim]Skipping the LAN (last failure: {failure[1]}), using the "
+                    "cloud[/dim]")
         return cloud
 
     endpoint = locate(profile, device)
     if endpoint is None:
         if mode == "lan":
             raise DeviceOffline(
-                t("局域网上找不到 {label}", label=device.label),
-                hint=t("确认在同一网段、设备在线；`mi lan discover` 看看扫得到谁"),
+                f"Not found on the LAN: {device.label}",
+                hint="Make sure you are on the same subnet and the device is online; "
+                     "`mi lan discover` shows what can be found",
             )
         return cloud
 
     if on_note:
-        on_note(
-            t(
-                "[dim]局域网直连 {ip}（{elapsed_ms:.0f}ms）[/dim]",
-                ip=endpoint.ip,
-                elapsed_ms=endpoint.elapsed_ms,
-            )
-        )
+        on_note(f"[dim]Direct LAN {endpoint.ip} ({endpoint.elapsed_ms:.0f}ms)[/dim]")
     lan = LanChannel(LanDevice(device.did, device.token or "", endpoint))
     if mode == "lan":
         return lan

@@ -1,4 +1,4 @@
-"""会话：鉴权头、自动续期、错误映射。"""
+"""Session: auth header, automatic renewal, error mapping."""
 import time
 
 import httpx
@@ -23,7 +23,7 @@ def _auth(profile: Profile, *, age: int = 0, expires_in: int = 3600) -> AuthData
 
 
 def test_authorization_header_has_no_space_after_bearer(profile: Profile):
-    """米家这套接口就是这么校验的，加空格会 401。"""
+    """That is how this Mi Home API validates it; adding a space gives 401."""
     _auth(profile)
     seen: dict[str, str] = {}
 
@@ -38,7 +38,7 @@ def test_authorization_header_has_no_space_after_bearer(profile: Profile):
 
 
 def test_token_refreshed_when_past_ratio(profile: Profile):
-    _auth(profile, age=3000)  # 已经过了 70%
+    _auth(profile, age=3000)  # already past 70%
     calls: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -60,7 +60,7 @@ def test_token_refreshed_when_past_ratio(profile: Profile):
     with Session(profile, client=httpx.Client(transport=httpx.MockTransport(handler))) as s:
         s.api_post("/app/v2/miotspec/prop/get", {})
     assert calls[0].endswith("/oauth/get_token")
-    # 新 token 要落盘，否则下次又刷一遍
+    # the new token must be persisted, or the next run refreshes again
     assert profile.require_auth().access_token == "AT2"
 
 

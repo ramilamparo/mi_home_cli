@@ -1,4 +1,4 @@
-"""输出渲染：table / json / yaml / plain。"""
+"""Output rendering: table / json / yaml / plain."""
 from __future__ import annotations
 
 import json
@@ -8,8 +8,6 @@ from typing import Any, Sequence
 
 from rich.console import Console
 from rich.table import Table
-
-from .i18n import localize_keys, t
 
 console = Console()
 err_console = Console(stderr=True)
@@ -63,18 +61,8 @@ def output(
     *,
     columns: Sequence[str] | None = None,
     title: str | None = None,
-    data_keys: bool = False,
 ) -> None:
-    """按格式输出。table 只对 list[dict] 和 dict 有意义。
-
-    data_keys=True 表示 dict 的键本身就是数据（属性名、spec 描述……）而不是列名，
-    原样输出，不做翻译。
-    """
-    # 命令里的行以中文列名为键，这里统一换成当前语言（中文环境下原样不动）
-    if not data_keys:
-        data = localize_keys(data)
-    if columns is not None:
-        columns = [t(col) for col in columns]
+    """Output in the given format. table only makes sense for list[dict] and dict."""
     if fmt is OutputFormat.json:
         console.print_json(json.dumps(data, ensure_ascii=False, default=str))
         return
@@ -114,7 +102,7 @@ def _print_table(
         return
     if isinstance(data, list):
         if not data:
-            console.print(t("[dim]（空）[/dim]"))
+            console.print("[dim](empty)[/dim]")
             return
         if not isinstance(data[0], dict):
             for item in data:
@@ -132,15 +120,16 @@ def _print_table(
 
 
 def raw(text: str) -> None:
-    """原样输出一行，不折行、不高亮。
+    """Print one line as is, without wrapping or highlighting.
 
-    授权 URL 很长，被 rich 折行后会插入真实换行符，用户复制粘贴就废了。
+    The authorization URL is long; when rich wraps it, real newlines are inserted and
+    the user's copy and paste is ruined.
     """
     err_console.print(text, soft_wrap=True, highlight=False, markup=False)
 
 
 def stream(message: str) -> None:
-    """流式输出的一行，走 stdout（要能被管道接住）。"""
+    """One line of streaming output, on stdout (so a pipe can pick it up)."""
     console.print(message, highlight=False, soft_wrap=True)
 
 
@@ -165,7 +154,7 @@ def is_tty() -> bool:
 
 
 def mask(value: str | None, keep: int = 4) -> str:
-    """打码 token 一类的敏感值。"""
+    """Mask sensitive values such as tokens."""
     if not value:
         return "-"
     if len(value) <= keep * 2:

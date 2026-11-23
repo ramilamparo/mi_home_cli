@@ -1,4 +1,4 @@
-"""回调解析与本地回调服务的测试。"""
+"""Tests for callback parsing and the local callback server."""
 import queue
 
 import httpx
@@ -62,7 +62,7 @@ def test_callback_server_captures_code():
             params={"code": "abc", "state": "s1"},
         )
     assert response.status_code == 200
-    assert "登录成功" in response.text
+    assert "Login successful" in response.text
     result = result_queue.get_nowait()
     assert (result.code, result.state, result.source) == ("abc", "s1", "server")
 

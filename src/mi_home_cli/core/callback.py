@@ -1,14 +1,16 @@
-"""接收 OAuth 回调。
+"""Receiving the OAuth callback.
 
-小米只接受 host 为 homeassistant.local:8123 的 redirect_uri（见 const.py），
-所以想自动拿到 code，得同时满足两件事：
+Xiaomi only accepts a redirect_uri whose host is homeassistant.local:8123 (see
+const.py), so to get the code automatically two things must hold at once:
 
-  1. 浏览器把 homeassistant.local 解析到跑 CLI 的这台机器；
-  2. 这台机器上的 8123 端口由我们监听。
+  1. the browser resolves homeassistant.local to the machine running the CLI;
+  2. port 8123 on that machine is listened on by us.
 
-条件 1 有三条路：本机已有 hosts 记录、局域网里有 mDNS 响应者（我们可以自己
-用 zeroconf 播一个）、或者用户手工加 hosts。任何一条都不成立时，回退到让用户
-把浏览器地址栏里的 URL 粘回来——那条路永远可用。
+There are three ways to satisfy condition 1: the machine already has a hosts entry,
+there is an mDNS responder on the LAN (we can advertise one ourselves with
+zeroconf), or the user adds a hosts entry by hand. When none of them holds, fall
+back to having the user paste the URL from the browser's address bar — that path is
+always available.
 """
 from __future__ import annotations
 
@@ -20,12 +22,11 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from ..i18n import t
 from ..errors import UsageError
 from . import const
 
 _PAGE = """<!doctype html>
-<html lang="zh"><head><meta charset="utf-8"><title>{title}</title>
+<html lang="en"><head><meta charset="utf-8"><title>{title}</title>
 <style>body{{font-family:system-ui,-apple-system,"PingFang SC",sans-serif;
 display:flex;align-items:center;justify-content:center;height:100vh;margin:0;
 background:#f6f7f9;color:#222}}div{{text-align:center}}
@@ -38,14 +39,14 @@ h1{{font-size:20px;margin:0 0 8px}}p{{color:#666;margin:0}}</style></head>
 class CallbackResult:
     code: str
     state: str | None
-    source: str  # "server" 或 "paste"
+    source: str  # "server" or "paste"
 
 
 class _Handler(BaseHTTPRequestHandler):
     server_version = "mi-home-cli"
     result_queue: "queue.Queue[CallbackResult]"
 
-    def do_GET(self) -> None:  # noqa: N802 (BaseHTTPRequestHandler 的约定)
+    def do_GET(self) -> None:  # noqa: N802 (BaseHTTPRequestHandler convention)
         params = parse_qs(urlparse(self.path).query)
         code = (params.get("code") or [None])[0]
         state = (params.get("state") or [None])[0]
@@ -53,10 +54,11 @@ class _Handler(BaseHTTPRequestHandler):
             self.result_queue.put(
                 CallbackResult(code=code, state=state, source="server")
             )
-            self._respond(200, t("登录成功"), t("可以关闭这个页面，回到终端。"))
+            self._respond(200, "Login successful", "You can close this page and return to the "
+                                       "terminal.")
         else:
-            error = (params.get("error") or [t("缺少 code 参数")])[0]
-            self._respond(400, t("登录失败"), str(error))
+            error = (params.get("error") or ["missing code parameter"])[0]
+            self._respond(400, "Login failed", str(error))
 
     def _respond(self, status: int, title: str, body: str) -> None:
         payload = _PAGE.format(title=title, body=body).encode("utf-8")
@@ -67,11 +69,11 @@ class _Handler(BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
     def log_message(self, *args: Any) -> None:
-        """默认会往 stderr 打访问日志，CLI 里不需要。"""
+        """By default an access log goes to stderr; the CLI does not need it."""
 
 
 class CallbackServer:
-    """监听 8123，等一次回调。"""
+    """Listen on 8123 and wait for one callback."""
 
     def __init__(
         self, result_queue: "queue.Queue[object]",
@@ -110,7 +112,7 @@ def port_available(port: int = const.REDIRECT_PORT, host: str = "0.0.0.0") -> bo
 
 
 def resolve_redirect_host(host: str = const.REDIRECT_HOST) -> list[str]:
-    """homeassistant.local 当前解析到哪些地址（解析不了就是空列表）。"""
+    """The addresses homeassistant.local currently resolves to (an empty list if it does not resolve)."""
     try:
         infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
     except socket.gaierror:
@@ -119,11 +121,12 @@ def resolve_redirect_host(host: str = const.REDIRECT_HOST) -> list[str]:
 
 
 def local_ips() -> list[str]:
-    """本机对外的 IP，用来判断 homeassistant.local 是不是指向自己。"""
+    """This machine's outward-facing IPs, used to tell whether homeassistant.local points at itself."""
     ips: set[str] = {"127.0.0.1"}
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-            # 不会真的发包，只是让内核选出默认出口地址。
+            # No packet is actually sent; this only makes the kernel pick the default
+            # egress address.
             sock.connect(("223.5.5.5", 53))
             ips.add(sock.getsockname()[0])
     except OSError:
@@ -139,9 +142,10 @@ def local_ips() -> list[str]:
 
 
 class MdnsPublisher:
-    """把 homeassistant.local 播成本机地址（需要可选依赖 zeroconf）。
+    """Advertise homeassistant.local as this machine's address (needs the optional dependency zeroconf).
 
-    局域网里已经有真的 Home Assistant 时会撞名，这时放弃并让用户走粘贴。
+    If there is already a real Home Assistant on the LAN the name collides; give up then
+    and let the user paste.
     """
 
     def __init__(self, address: str) -> None:
@@ -150,11 +154,11 @@ class MdnsPublisher:
         self._info: Any = None
 
     def start(self) -> str | None:
-        """成功返回 None，失败返回原因。"""
+        """Returns None on success, the reason on failure."""
         try:
             from zeroconf import ServiceInfo, Zeroconf
         except ImportError:
-            return t("未安装 zeroconf（uv sync --extra mdns）")
+            return "zeroconf is not installed (uv sync --extra mdns)"
         try:
             self._zeroconf = Zeroconf()
             self._info = ServiceInfo(
@@ -165,9 +169,9 @@ class MdnsPublisher:
                 server=f"{const.REDIRECT_HOST}.",
             )
             self._zeroconf.register_service(self._info)
-        except Exception as err:  # zeroconf 的异常类型比较杂
+        except Exception as err:  # zeroconf raises a mixed bag of exception types
             self.close()
-            return t("注册 mDNS 失败：{err}", err=err)
+            return f"Failed to register mDNS: {err}"
         return None
 
     def close(self) -> None:
@@ -186,16 +190,16 @@ class MdnsPublisher:
 
 
 def parse_pasted(text: str, *, expected_state: str | None = None) -> CallbackResult:
-    """解析用户粘回来的内容。
+    """Parse what the user pasted back.
 
-    支持三种写法：
-      * 完整 URL：http://homeassistant.local:8123/...?code=xxx&state=yyy
-      * 光是 query：code=xxx&state=yyy 或 ?code=xxx&state=yyy
-      * 光是 code：xxx
+    Three forms are supported:
+      * a full URL: http://homeassistant.local:8123/...?code=xxx&state=yyy
+      * just the query: code=xxx&state=yyy or ?code=xxx&state=yyy
+      * just the code: xxx
     """
     text = text.strip().strip('"').strip("'")
     if not text:
-        raise UsageError(t("没有输入内容"))
+        raise UsageError("Nothing was entered")
 
     query = ""
     if "://" in text:
@@ -212,15 +216,16 @@ def parse_pasted(text: str, *, expected_state: str | None = None) -> CallbackRes
         state = (params.get("state") or [None])[0]
         if not code:
             raise UsageError(
-                t("这段内容里没有 code 参数：{v0}", v0=error or text[:80]),
+                f"This text has no code parameter: {error or text[:80]}",
             )
     else:
         if any(char in text for char in " \t\n"):
-            raise UsageError(t("无法识别的内容，请粘贴完整的重定向 URL"))
+            raise UsageError("Unrecognized input; paste the complete redirect URL")
         code, state = text, None
 
     if expected_state and state and state != expected_state:
         raise UsageError(
-            t("state 不匹配，这不是本次登录的回调；请重新执行 `mi auth login`")
+            "state mismatch: this is not the callback of this login; run `mi auth "
+            "login` again"
         )
     return CallbackResult(code=code, state=state, source="paste")

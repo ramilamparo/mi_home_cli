@@ -1,8 +1,9 @@
-"""语义命令用的映射：`--brightness 60` → 到底写哪个属性。
+"""The mapping used by the semantic commands: `--brightness 60` → which property to write.
 
-能这么做是因为 MIoT spec 里属性的 urn 名是标准化的（on、brightness、
-color-temperature、target-temperature、fan-level、motor-control…），
-不同厂商的同类设备用的是同一套名字。所以语义层只认名字，不认型号。
+This is possible because the urn names of properties in the MIoT spec are
+standardised (on, brightness, color-temperature, target-temperature, fan-level,
+motor-control…); devices of the same kind from different vendors use the same set
+of names. So the semantic layer only looks at names, not models.
 """
 from __future__ import annotations
 
@@ -10,37 +11,28 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from ..i18n import get_lang, t
 from ..errors import InvalidValue, SpecNotFound
 from .spec import DeviceSpec, Property, parse_value
 
-# 常见颜色的中英文别名 → RGB
+# Names of common colours → RGB
 NAMED_COLORS: dict[str, tuple[int, int, int]] = {
-    "red": (255, 0, 0), "红": (255, 0, 0), "红色": (255, 0, 0),
-    "green": (0, 255, 0), "绿": (0, 255, 0), "绿色": (0, 255, 0),
-    "blue": (0, 0, 255), "蓝": (0, 0, 255), "蓝色": (0, 0, 255),
-    "white": (255, 255, 255), "白": (255, 255, 255), "白色": (255, 255, 255),
-    "yellow": (255, 255, 0), "黄": (255, 255, 0), "黄色": (255, 255, 0),
-    "orange": (255, 165, 0), "橙": (255, 165, 0), "橙色": (255, 165, 0),
-    "purple": (128, 0, 128), "紫": (128, 0, 128), "紫色": (128, 0, 128),
-    "pink": (255, 105, 180), "粉": (255, 105, 180), "粉色": (255, 105, 180),
-    "cyan": (0, 255, 255), "青": (0, 255, 255), "青色": (0, 255, 255),
-    "warm": (255, 170, 100), "暖": (255, 170, 100), "暖色": (255, 170, 100),
+    "red": (255, 0, 0),
+    "green": (0, 255, 0),
+    "blue": (0, 0, 255),
+    "white": (255, 255, 255),
+    "yellow": (255, 255, 0),
+    "orange": (255, 165, 0),
+    "purple": (128, 0, 128),
+    "pink": (255, 105, 180),
+    "cyan": (0, 255, 255),
+    "warm": (255, 170, 100),
 }
 
 _HEX_RE = re.compile(r"^#?([0-9a-fA-F]{6})$")
 
 
-def _color_examples() -> list[str]:
-    """报错提示里举例用的颜色名：英文界面只举英文名。"""
-    names = list(NAMED_COLORS)
-    if get_lang() == "en":
-        names = [name for name in names if name.isascii()]
-    return names[:6]
-
-
 def parse_color(text: str) -> int:
-    """`#ff8800` / `ff8800` / `红` / `red` → spec 用的 uint32 RGB。"""
+    """`#ff8800` / `ff8800` / `red` → the uint32 RGB the spec uses."""
     value = text.strip()
     match = _HEX_RE.match(value)
     if match:
@@ -49,8 +41,10 @@ def parse_color(text: str) -> int:
         red, green, blue = NAMED_COLORS[value.lower()]
     else:
         raise InvalidValue(
-            t("看不懂的颜色 `{text}`", text=text),
-            hint=t("写 #ff8800 这样的十六进制，或 ") + t("、").join(_color_examples()),
+            f"Unrecognized color `{text}`",
+            hint="Use hex such as #ff8800, or one of " + ", ".join(
+                list(NAMED_COLORS)[:6]
+            ),
         )
     return (red << 16) | (green << 8) | blue
 
@@ -62,7 +56,7 @@ def format_color(value: Any) -> str:
 
 
 def enum_value(prop: Property, *keywords: str) -> Any | None:
-    """在枚举里找语义匹配的值，比如窗帘的「打开」。"""
+    """Find the semantically matching value in an enum, e.g. "open" for a curtain."""
     for item in prop.value_list:
         text = f"{item.description} {item.raw}".lower()
         if any(keyword.lower() in text for keyword in keywords):
@@ -72,7 +66,7 @@ def enum_value(prop: Property, *keywords: str) -> Any | None:
 
 @dataclass
 class Change:
-    """一次待下发的属性写入。"""
+    """One pending property write."""
 
     prop: Property
     value: Any
@@ -87,9 +81,10 @@ class Change:
 
 
 class Planner:
-    """把语义选项翻成一组属性写入。
+    """Translates semantic options into a set of property writes.
 
-    找不到对应属性时直接报错，并说清楚这台设备支持什么——比默默忽略强。
+    When no matching property is found, an error is raised that says clearly what the
+    device does support — better than silently ignoring it.
     """
 
     def __init__(self, spec: DeviceSpec, label: str) -> None:
@@ -101,13 +96,10 @@ class Planner:
         prop = self.spec.by_name(*names, writable=True)
         if prop is None:
             raise SpecNotFound(
-                t(
-                    "{label} 不支持 {option}（spec 里没有可写的 {v0}）",
-                    label=self.label,
-                    option=option,
-                    v0=' / '.join(names),
-                ),
-                hint=t("用 `mi spec show {label} --writable` 看看支持什么", label=self.label),
+                f"{self.label} does not support {option} (the spec has no writable "
+                f"{' / '.join(names)})",
+                hint=f"See what is supported with `mi spec show {self.label} "
+                     "--writable`",
             )
         return prop
 
@@ -125,23 +117,20 @@ class Planner:
         value = enum_value(prop, *keywords)
         if value is None:
             raise SpecNotFound(
-                t(
-                    "{label} 的 {full_name} 里没有「{v0}」这一档",
-                    label=self.label,
-                    full_name=prop.full_name,
-                    v0=keywords[0],
-                ),
-                hint=t("可选值：") + prop.range_text(),
+                f"{self.label}: {prop.full_name} has no \"{keywords[0]}\" value",
+                hint="Allowed values: " + prop.range_text(),
             )
         self.changes.append(Change(prop, value))
 
     def params(self, did: str) -> list[dict[str, Any]]:
-        # on 放最前面：先通电再调参数，多数设备更听话
+        # on goes first: power up before adjusting parameters, most devices behave
+        # better that way
         ordered = sorted(self.changes, key=lambda c: c.prop.name != "on")
         return [change.param(did) for change in ordered]
 
 
-# 各类设备「看状态」时值得显示的属性，按这个顺序
+# The properties worth showing when "looking at the state" of each kind of device, in
+# this order
 STATUS_PROPERTIES: dict[str, tuple[str, ...]] = {
     "light": ("on", "brightness", "color-temperature", "color", "mode"),
     "climate": (

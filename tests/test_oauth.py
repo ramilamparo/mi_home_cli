@@ -1,4 +1,4 @@
-"""OAuth 授权流程的离线测试。"""
+"""Offline tests of the OAuth authorization flow."""
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -31,7 +31,8 @@ def test_auth_url_contains_required_params():
     assert params["device_id"] == ["ha.abc"]
     assert params["state"] == ["s1"]
     assert params["skip_confirm"] == ["false"]
-    # host 必须是白名单里的那个，换了小米会拒；路径也要照 HA 的形态
+    # The host must be the allowlisted one, Xiaomi rejects anything else; the path
+    # follows HA's shape too
     assert params["redirect_uri"] == [
         f"http://{const.REDIRECT_HOST}:{const.REDIRECT_PORT}"
         f"/api/webhook/1234567890"
@@ -39,7 +40,7 @@ def test_auth_url_contains_required_params():
 
 
 def test_state_matches_home_assistant_algorithm():
-    # 和上游 miot_cloud.MIoTOauthClient 一致：sha1("d=" + device_id)
+    # Same as upstream miot_cloud.MIoTOauthClient: sha1("d=" + device_id)
     assert state_for_device("ha.abc") == (
         "4308453a1cae61de9a1359eaf4364cf22bd2cd17"
     )
@@ -77,14 +78,14 @@ def test_exchange_code_success():
     assert token.expires_in == 3600
 
     auth = token.to_auth("cn", "ha.abc")
-    # 有效期用掉 70% 就该刷新
+    # Refresh once 70% of the lifetime is used up
     assert auth.refresh_at == auth.obtained_at + 2520
     assert not auth.needs_refresh
     assert not auth.expired
 
 
 def test_exchange_code_invalid_code_message():
-    """小米把真正的错误藏在 message 的 JSON 字符串里，要翻出来。"""
+    """Xiaomi hides the real error in a JSON string inside message; it has to be dug out."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(

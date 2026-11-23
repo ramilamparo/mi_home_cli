@@ -1,4 +1,4 @@
-"""`mi get` / `mi set` / `mi action` 以及 on/off/toggle。"""
+"""`mi get` / `mi set` / `mi action`, plus on/off/toggle."""
 from __future__ import annotations
 
 import time
@@ -6,7 +6,6 @@ from typing import Annotated, Any, Optional
 
 import typer
 
-from ..i18n import t
 from .. import render
 from ..core.channel import DeviceChannel, open_device_channel
 from ..core.registry import Device
@@ -39,7 +38,7 @@ def _ctx(ctx: typer.Context) -> AppContext:
 def _channel(
     app_ctx: AppContext, session: Session, device: Device
 ) -> DeviceChannel:
-    """按 --channel 打开控制通道。"""
+    """Open the control channel according to --channel."""
     return open_device_channel(
         session,
         app_ctx.profile,
@@ -51,18 +50,19 @@ def _channel(
 
 def _target(app_ctx: AppContext, ref: str) -> tuple[Device, DeviceSpec]:
     device, spec = load_spec(app_ctx, ref)
-    if device is None:  # load_spec 只有传 urn 时才会是 None
-        raise UsageError(t("这里需要一台具体设备，不能只给 urn"))
+    if device is None:  # load_spec only returns None when given a urn
+        raise UsageError("A specific device is required here, not just a urn")
     return device, spec
 
 
 def read_current(
     api: DeviceChannel, did: str, props: list[Property]
 ) -> dict[tuple[int, int], Any]:
-    """写之前先读一遍旧值。
+    """Read the old values before writing.
 
-    多一次请求换「旧值 → 新值」的可读性，也让误操作能照着恢复。读不到就
-    算了，不因此挡住写入。
+    One extra request buys the readability of "old value → new value" and lets a
+    mistake be undone by the book. If reading fails, so be it; it does not block the
+    write.
     """
     readable = [p for p in props if p.readable]
     if not readable:
@@ -80,18 +80,21 @@ def read_current(
     }
 
 
-# 写入被接受的返回码。0 是明确成功；1 是「已接受、设备执行中」——部分设备
-# （如 dwdz.switch.sw0a01）对每次写入都回 1，实际操作是成功的，不能当失败。
+# Return codes that mean a write was accepted. 0 is a definite success; 1 is
+# "accepted, the device is executing" — some devices (e.g. dwdz.switch.sw0a01)
+# answer 1 to every write while the operation actually succeeds, so it must not
+# be treated as a failure.
 ACCEPTED_CODES = frozenset({0, 1})
 
 
 def describe_action_output(
     spec: DeviceSpec, action: Action, out: Any
 ) -> dict[str, Any] | Any:
-    """把动作的返回值配上属性名。
+    """Attach property names to an action's return values.
 
-    out 里只有值（或 {piid, value}），光打印一个数组没法看——比如摄像机的
-    start-rtsp-stream 返回的是 [地址, 快照地址, 过期时间]，配上名字才有意义。
+    out only holds values (or {piid, value}); printing a bare array is unreadable —
+    a camera's start-rtsp-stream, for instance, returns [address, snapshot address,
+    expiry time], which only means something with names attached.
     """
     if not out:
         return "-"
@@ -104,7 +107,7 @@ def describe_action_output(
     elif len(out) == len(action.out_piids):
         pairs = list(zip(action.out_piids, out))
     else:
-        # 对不上就原样给出去，别猜
+        # If they do not line up, hand it out as is; do not guess
         return out
     for piid, value in pairs:
         prop = spec.property_at(action.siid, piid)
@@ -114,15 +117,16 @@ def describe_action_output(
 
 
 def _explain_code(code: int) -> str:
-    """把常见的返回码翻成人话。"""
+    """Turn common return codes into plain language."""
     return {
-        0: t("成功"),
-        1: t("已接受"),
-        -704010000: t("设备不在线"),
-        -704042011: t("设备不支持这个属性"),
-        -704220025: t("属性不可写"),
-        -704053026: t("设备拒绝（可能被童锁/物理开关限制）"),
-    }.get(code, t("失败（code={code}）", code=code))
+        0: "OK",
+        1: "accepted",
+        -704010000: "device is offline",
+        -704042011: "the device does not support this property",
+        -704220025: "the property is not writable",
+        -704053026: "rejected by the device (possibly a child lock or a physical "
+                    "switch)",
+    }.get(code, f"failed (code={code})")
 
 
 def verify_after_write(
@@ -133,10 +137,12 @@ def verify_after_write(
     attempts: int = 2,
     delay: float = 0.6,
 ) -> dict[tuple[int, int], Any]:
-    """写完再读一遍，用设备的真实状态说话。
+    """Read once more after writing and let the device's real state speak.
 
-    返回码只是「接受」的回执，不代表已生效；而云端的值可能有延迟，所以读不
-    到预期值时会再试一次，仍不一致也只当作「可能有延迟」提示，不判失败。
+    The return code is only a receipt for "accepted" and does not mean the change took
+    effect; and the cloud's value may lag, so when the expected value is not read back
+    we try once more, and if it still differs it is only reported as "possibly delayed",
+    not as a failure.
     """
     readable = [(prop, value) for prop, value in expected if prop.readable]
     if not readable:
@@ -167,13 +173,14 @@ def verify_after_write(
 
 def get(
     ctx: typer.Context,
-    device: Annotated[str, typer.Argument(help=t("设备名称、别名或 did"))],
+    device: Annotated[str, typer.Argument(help="Device name, alias or did")],
     props: Annotated[
-        Optional[list[str]], typer.Argument(help=t("属性，如 on / light.brightness / 2.1"))
+        Optional[list[str]], typer.Argument(help="Property, e.g. on / "
+                                                 "light.brightness / 2.1")
     ] = None,
     output: OutputOption = None,
 ) -> None:
-    """读属性。不指定属性就读所有可读属性。"""
+    """Read properties. Reads every readable property when none is given."""
     app_ctx = _ctx(ctx)
     target, spec = _target(app_ctx, device)
 
@@ -181,11 +188,12 @@ def get(
         wanted: list[Property] = [spec.find_property(ref) for ref in props]
         unreadable = [p.full_name for p in wanted if not p.readable]
         if unreadable:
-            raise UsageError(t("这些属性不可读：{v0}", v0=t('、').join(unreadable)))
+            raise UsageError("These properties are not readable: "
+                             f"{', '.join(unreadable)}")
     else:
         wanted = [p for p in spec.properties if p.readable]
         if not wanted:
-            raise SpecNotFound(t("{label} 没有可读属性", label=target.label))
+            raise SpecNotFound(f"{target.label} has no readable properties")
 
     with app_ctx.session() as session:
         results = _channel(app_ctx, session, target).get_props(
@@ -201,7 +209,6 @@ def get(
                 for p in wanted
             },
             fmt,
-            data_keys=True,
         )
         return
     if fmt is OutputFormat.plain and len(wanted) == 1:
@@ -215,32 +222,29 @@ def get(
         code = item.get("code", -1)
         rows.append(
             {
-                "属性": prop.full_name,
+                "Property": prop.full_name,
                 "id": prop.ref,
-                "说明": prop.description,
-                "值": format_value(prop, item.get("value"))
+                "Description": prop.description,
+                "Value": format_value(prop, item.get("value"))
                 if code == 0
                 else _explain_code(int(code)),
             }
         )
-    render.output(rows, fmt, title=t(
-        "{label}（{location}）",
-        label=target.label,
-        location=target.location,
-    ))
+    render.output(rows, fmt, title=f"{target.label} ({target.location})")
 
 
 def set_(
     ctx: typer.Context,
-    device: Annotated[str, typer.Argument(help=t("设备名称、别名或 did"))],
+    device: Annotated[str, typer.Argument(help="Device name, alias or did")],
     assignments: Annotated[
-        list[str], typer.Argument(help=t("属性=值，可以写多个，如 on=true brightness=60"))
+        list[str], typer.Argument(help="property=value, repeatable, e.g. on=true "
+                                       "brightness=60")
     ],
     dry_run: DryRunOption = None,
     verify: VerifyOption = None,
     output: OutputOption = None,
 ) -> None:
-    """写属性。"""
+    """Write properties."""
     app_ctx = apply_write_flags(_ctx(ctx), dry_run, verify)
     target, spec = _target(app_ctx, device)
 
@@ -248,13 +252,13 @@ def set_(
     props: list[Property] = []
     for item in assignments:
         if "=" not in item:
-            raise UsageError(t("`{item}` 不是 属性=值 的形式", item=item))
+            raise UsageError(f"`{item}` is not in property=value form")
         ref, raw = item.split("=", 1)
         prop = spec.find_property(ref)
         if not prop.writable:
             raise InvalidValue(
-                t("{full_name} 不可写", full_name=prop.full_name),
-                hint=t("权限是 {v0}", v0=prop.access_text()),
+                f"{prop.full_name} is not writable",
+                hint=f"Its access is {prop.access_text()}",
             )
         value = parse_value(prop, raw)
         props.append(prop)
@@ -263,13 +267,13 @@ def set_(
         )
 
     if app_ctx.dry_run:
-        render.info(t("[dim]--dry-run，只解析不下发：[/dim]"))
+        render.info("[dim]--dry-run: parsed only, nothing sent:[/dim]")
         render.output(
             [
                 {
-                    "属性": prop.full_name,
+                    "Property": prop.full_name,
                     "id": prop.ref,
-                    "写入值": param["value"],
+                    "Value to write": param["value"],
                 }
                 for prop, param in zip(props, params)
             ],
@@ -301,39 +305,42 @@ def set_(
         result = _explain_code(code)
         if ok and key in actual:
             if actual[key] == param["value"]:
-                result = t("成功")
+                result = "OK"
             else:
-                result = t("已下发，回读仍是 {v0}", v0=format_value(prop, actual[key]))
+                result = f"sent, still reads back as {format_value(prop, actual[key])}"
                 lagging = True
         old = before.get(key)
         rows.append(
             {
-                "属性": prop.full_name,
-                "旧值": format_value(prop, old) if old is not None else "-",
-                "新值": format_value(prop, param["value"]),
-                "结果": result,
+                "Property": prop.full_name,
+                "Old value": format_value(prop, old) if old is not None else "-",
+                "New value": format_value(prop, param["value"]),
+                "Result": result,
             }
         )
     render.output(rows, pick_output(app_ctx, output), title=target.label)
     if lagging:
-        render.warn(t("云端读回的值还没跟上，可能是设备上报有延迟；隔几秒再 `mi get` 看看"))
+        render.warn("The value read back from the cloud has not caught up yet, "
+                    "probably because the device reports with a delay; try `mi get` "
+                    "again in a few seconds")
     if failed:
         raise typer.Exit(code=CloudError.exit_code)
 
 
 def action(
     ctx: typer.Context,
-    device: Annotated[str, typer.Argument(help=t("设备名称、别名或 did"))],
+    device: Annotated[str, typer.Argument(help="Device name, alias or did")],
     name: Annotated[
-        Optional[str], typer.Argument(help=t("动作名，不写则列出所有动作"))
+        Optional[str], typer.Argument(help="Action name; lists all actions when omitted")
     ] = None,
     values: Annotated[
-        Optional[list[str]], typer.Option("--in", help=t("按顺序传入参，可重复"))
+        Optional[list[str]], typer.Option("--in", help="Input arguments in order, "
+                                                       "repeatable")
     ] = None,
     dry_run: DryRunOption = None,
     output: OutputOption = None,
 ) -> None:
-    """调用动作。不指定动作名就列出这台设备支持的动作。"""
+    """Call an action. Lists the actions the device supports when no name is given."""
     app_ctx = apply_write_flags(_ctx(ctx), dry_run)
     target, spec = _target(app_ctx, device)
     fmt = pick_output(app_ctx, output)
@@ -342,15 +349,15 @@ def action(
         render.output(
             [
                 {
-                    "动作": item.full_name,
+                    "Action": item.full_name,
                     "id": item.ref,
-                    "入参": describe_action_inputs(spec, item) or "-",
-                    "说明": item.description,
+                    "Inputs": describe_action_inputs(spec, item) or "-",
+                    "Description": item.description,
                 }
                 for item in spec.actions
             ],
             fmt,
-            title=t("{label} 支持的动作", label=target.label),
+            title=f"Actions supported by {target.label}",
         )
         return
 
@@ -358,14 +365,10 @@ def action(
     raw_values = list(values or [])
     if len(raw_values) != len(target_action.in_piids):
         raise UsageError(
-            t(
-                "{full_name} 需要 {v0} 个入参（{v1}），给了 {n_raw_values} 个",
-                full_name=target_action.full_name,
-                v0=len(target_action.in_piids),
-                v1=describe_action_inputs(spec, target_action) or t('无'),
-                n_raw_values=len(raw_values),
-            ),
-            hint=t("用 --in 依次传入，顺序按上面列的入参"),
+            f"{target_action.full_name} takes {len(target_action.in_piids)} input(s) ("
+            f"{describe_action_inputs(spec, target_action) or 'none'}), but "
+            f"{len(raw_values)} given",
+            hint="Pass them one by one with --in, in the order listed above",
         )
     parsed: list[Any] = []
     for piid, raw in zip(target_action.in_piids, raw_values):
@@ -374,13 +377,8 @@ def action(
 
     if app_ctx.dry_run:
         render.info(
-            t(
-                "[dim]--dry-run：{label} {full_name}（{ref}）入参 {parsed}[/dim]",
-                label=target.label,
-                full_name=target_action.full_name,
-                ref=target_action.ref,
-                parsed=parsed,
-            )
+            f"[dim]--dry-run: {target.label} {target_action.full_name} ("
+            f"{target_action.ref}) inputs {parsed}[/dim]"
         )
         return
 
@@ -390,22 +388,22 @@ def action(
         )
     code = int(result.get("code", -1))
     data: dict[str, Any] = {
-        "设备": target.label,
-        "动作": target_action.full_name,
-        "结果": _explain_code(code),
+        "Device": target.label,
+        "Action": target_action.full_name,
+        "Result": _explain_code(code),
     }
     named = describe_action_output(spec, target_action, result.get("out"))
     if isinstance(named, dict):
         data.update({f"↳ {key}": value for key, value in named.items()})
     else:
-        data["返回"] = named
+        data["Output"] = named
     render.output(data, fmt)
     if code != 0:
         raise typer.Exit(code=CloudError.exit_code)
 
 
 def _switch(app_ctx: AppContext, device: str, value: bool | None) -> None:
-    """on / off / toggle 共用：找到这台设备的开关属性再写。"""
+    """Shared by on / off / toggle: find the device's switch property, then write it."""
     target, spec = _target(app_ctx, device)
     candidates = [
         prop
@@ -414,23 +412,19 @@ def _switch(app_ctx: AppContext, device: str, value: bool | None) -> None:
     ]
     if not candidates:
         raise SpecNotFound(
-            t("{label} 没有可写的开关属性", label=target.label),
-            hint=t("用 `mi spec show` 看看它支持什么，再用 `mi set`"),
+            f"{target.label} has no writable on/off property",
+            hint="See what it supports with `mi spec show`, then use `mi set`",
         )
-    # 多个服务都有 on 时（比如带夜灯的灯），取 siid 最小的主服务
+    # When several services have on (e.g. a light with a night light), take the main
+    # service with the smallest siid
     prop = min(candidates, key=lambda p: (p.siid, p.piid))
     if app_ctx.dry_run:
-        # toggle 的目标值取决于当前状态，dry-run 不读设备就说不准，如实标注
-        target_value = t("取反当前状态") if value is None else format_value(prop, value)
+        # The target value of toggle depends on the current state; a dry run does not
+        # read the device and cannot tell, so say so honestly
+        target_value = "toggle the current state" if value is None else format_value(prop, value)
         render.info(
-            t(
-                "[dim]--dry-run：{label}（{location}） → {full_name}（{ref}）= {target_value}[/dim]",
-                label=target.label,
-                location=target.location,
-                full_name=prop.full_name,
-                ref=prop.ref,
-                target_value=target_value,
-            )
+            f"[dim]--dry-run: {target.label} ({target.location}) → {prop.full_name} ("
+            f"{prop.ref}) = {target_value}[/dim]"
         )
         return
     with app_ctx.session() as session:
@@ -440,7 +434,7 @@ def _switch(app_ctx: AppContext, device: str, value: bool | None) -> None:
                 [{"did": target.did, "siid": prop.siid, "piid": prop.piid}]
             )
             if not current or current[0].get("code") != 0:
-                raise CloudError(t("读不到 {label} 的当前开关状态", label=target.label))
+                raise CloudError(f"Cannot read {target.label}'s current on/off state")
             value = not bool(current[0].get("value"))
         results = api.set_props(
             [
@@ -460,53 +454,45 @@ def _switch(app_ctx: AppContext, device: str, value: bool | None) -> None:
         )
     if code not in ACCEPTED_CODES:
         render.error(
-            t("{label} 开失败：{reason}", label=target.label, reason=_explain_code(code))
-            if value
-            else t("{label} 关失败：{reason}", label=target.label, reason=_explain_code(code))
+            f"{target.label}: failed to turn {'on' if value else 'off'}: "
+            f"{_explain_code(code)}"
         )
         raise typer.Exit(code=CloudError.exit_code)
     readback = actual.get((prop.siid, prop.piid))
     if readback is not None and readback != value:
         render.warn(
-            t(
-                "{label} 指令已下发，但回读仍是{v0}，可能是上报延迟",
-                label=target.label,
-                v0=format_value(prop, readback),
-            )
+            f"{target.label}: command sent, but it still reads back as "
+            f"{format_value(prop, readback)}; the report may be delayed"
         )
         return
-    render.success(
-        t("{label} 已打开", label=target.label)
-        if value
-        else t("{label} 已关闭", label=target.label)
-    )
+    render.success(f"{target.label} turned {'on' if value else 'off'}")
 
 
 def on(
     ctx: typer.Context,
-    device: Annotated[str, typer.Argument(help=t("设备名称、别名或 did"))],
+    device: Annotated[str, typer.Argument(help="Device name, alias or did")],
     dry_run: DryRunOption = None,
     verify: VerifyOption = None,
 ) -> None:
-    """打开设备。"""
+    """Turn a device on."""
     _switch(apply_write_flags(_ctx(ctx), dry_run, verify), device, True)
 
 
 def off(
     ctx: typer.Context,
-    device: Annotated[str, typer.Argument(help=t("设备名称、别名或 did"))],
+    device: Annotated[str, typer.Argument(help="Device name, alias or did")],
     dry_run: DryRunOption = None,
     verify: VerifyOption = None,
 ) -> None:
-    """关闭设备。"""
+    """Turn a device off."""
     _switch(apply_write_flags(_ctx(ctx), dry_run, verify), device, False)
 
 
 def toggle(
     ctx: typer.Context,
-    device: Annotated[str, typer.Argument(help=t("设备名称、别名或 did"))],
+    device: Annotated[str, typer.Argument(help="Device name, alias or did")],
     dry_run: DryRunOption = None,
     verify: VerifyOption = None,
 ) -> None:
-    """切换开关。"""
+    """Toggle a device on/off."""
     _switch(apply_write_flags(_ctx(ctx), dry_run, verify), device, None)

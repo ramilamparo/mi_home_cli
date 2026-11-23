@@ -1,4 +1,4 @@
-"""云端接口的数据组装。"""
+"""Data assembly of the cloud API."""
 import httpx
 import pytest
 
@@ -11,15 +11,15 @@ HOME_RESULT = {
     "result": {
         "homelist": [
             {
-                "id": 111, "name": "我家", "uid": 999, "dids": ["d-home"],
+                "id": 111, "name": "My Home", "uid": 999, "dids": ["d-home"],
                 "roomlist": [
-                    {"id": 11, "name": "客厅", "dids": ["d1"]},
-                    {"id": 12, "name": "卧室", "dids": ["d2", "d2.s1"]},
+                    {"id": 11, "name": "Living Room", "dids": ["d1"]},
+                    {"id": 12, "name": "Bedroom", "dids": ["d2", "d2.s1"]},
                 ],
             }
         ],
         "share_home_list": [
-            {"id": 222, "name": "朋友家", "uid": 888, "dids": [], "roomlist": []}
+            {"id": 222, "name": "Friend Home", "uid": 888, "dids": [], "roomlist": []}
         ],
     },
 }
@@ -43,10 +43,10 @@ def test_fetch_homes_flattens_rooms(profile: Profile):
     with _session(profile, lambda r: httpx.Response(200, json=HOME_RESULT)) as s:
         homes = CloudApi(s).fetch_homes()
     assert homes["uid"] == "999"
-    assert [h["home_name"] for h in homes["homes"]] == ["我家", "朋友家"]
+    assert [h["home_name"] for h in homes["homes"]] == ["My Home", "Friend Home"]
     assert homes["homes"][0]["shared"] is False
     assert homes["homes"][1]["shared"] is True
-    assert [r["room_name"] for r in homes["homes"][0]["rooms"]] == ["客厅", "卧室"]
+    assert [r["room_name"] for r in homes["homes"][0]["rooms"]] == ["Living Room", "Bedroom"]
 
 
 def test_device_list_page_follows_pagination(profile: Profile):
@@ -54,12 +54,12 @@ def test_device_list_page_follows_pagination(profile: Profile):
         {
             "code": 0,
             "result": {
-                "list": [_device("d1", "灯一")],
+                "list": [_device("d1", "Light One")],
                 "has_more": True,
                 "next_start_did": "d1",
             },
         },
-        {"code": 0, "result": {"list": [_device("d2", "灯二")], "has_more": False}},
+        {"code": 0, "result": {"list": [_device("d2", "Light Two")], "has_more": False}},
     ]
     calls = []
 
@@ -78,7 +78,7 @@ def test_fetch_all_merges_placement_and_folds_sub_devices(profile: Profile):
         if request.url.path.endswith("/homeroom/gethome"):
             return httpx.Response(200, json=HOME_RESULT)
         body = request.read().decode()
-        if '"dids": []' in body.replace("\n", ""):  # 查单独分享设备那次
+        if '"dids": []' in body.replace("\n", ""):  # the call that looks up individually shared devices
             return httpx.Response(200, json={"code": 0, "result": {"list": []}})
         return httpx.Response(
             200,
@@ -86,10 +86,10 @@ def test_fetch_all_merges_placement_and_folds_sub_devices(profile: Profile):
                 "code": 0,
                 "result": {
                     "list": [
-                        _device("d1", "客厅灯"),
-                        _device("d2", "网关"),
-                        _device("d2.s1", "子设备"),
-                        _device("d-home", "没分房间的"),
+                        _device("d1", "Living Room Light"),
+                        _device("d2", "Gateway"),
+                        _device("d2.s1", "Sub Device"),
+                        _device("d-home", "No Room Device"),
                     ]
                 },
             },
@@ -99,13 +99,13 @@ def test_fetch_all_merges_placement_and_folds_sub_devices(profile: Profile):
         data = CloudApi(s).fetch_all()
 
     devices = data["devices"]
-    assert devices["d1"]["room_name"] == "客厅"
-    assert devices["d1"]["home_name"] == "我家"
-    # 家庭直属设备没有房间
+    assert devices["d1"]["room_name"] == "Living Room"
+    assert devices["d1"]["home_name"] == "My Home"
+    # devices directly under the home have no room
     assert devices["d-home"]["room_name"] == ""
-    # 子设备折进父设备，不单独出现在列表里
+    # sub-devices are folded into their parent and do not appear separately in the list
     assert "d2.s1" not in devices
-    assert devices["d2"]["sub_devices"]["s1"]["name"] == "子设备"
+    assert devices["d2"]["sub_devices"]["s1"]["name"] == "Sub Device"
 
 
 def test_ignores_miwifi_devices(profile: Profile):
@@ -114,7 +114,7 @@ def test_ignores_miwifi_devices(profile: Profile):
             200,
             json={
                 "code": 0,
-                "result": {"list": [_device("miwifi.1", "路由器"), _device("d1", "灯")]},
+                "result": {"list": [_device("miwifi.1", "Router"), _device("d1", "Light")]},
             },
         )
 
@@ -149,19 +149,20 @@ def test_action_sends_bare_value_list(profile: Profile):
 
     with _session(profile, handler) as s:
         CloudApi(s).call_action("d1", 2, 1, [5, "x"])
-    # 这个接口要的是值的数组，不是 {piid, value}
+    # this API wants an array of values, not {piid, value}
     assert seen == {"did": "d1", "siid": 2, "aiid": 1, "in": [5, "x"]}
 
 
 def test_set_result_code_1_is_accepted_not_failure():
-    """有些设备（如 dwdz.switch.sw0a01）对每次写入都回 code=1，操作其实成功了。
+    """Some devices (e.g. dwdz.switch.sw0a01) answer code=1 to every write while the operation actually succeeds.
 
-    实测：读当前值 code=0，写回同一个值 code=1，设备状态正常；把非 0 一律
-    当失败会让所有写操作都报错。
+    In testing: reading the current value gives code=0, writing the same value back
+    gives code=1, and the device state is fine; treating every non-zero code as a
+    failure would make all write operations report an error.
     """
     from mi_home_cli.cli.prop import ACCEPTED_CODES, _explain_code
 
     assert 0 in ACCEPTED_CODES and 1 in ACCEPTED_CODES
     assert -704010000 not in ACCEPTED_CODES
-    assert _explain_code(1) == "已接受"
-    assert "失败" in _explain_code(-704220025) or "不可写" in _explain_code(-704220025)
+    assert _explain_code(1) == "accepted"
+    assert "failed" in _explain_code(-704220025) or "not writable" in _explain_code(-704220025)

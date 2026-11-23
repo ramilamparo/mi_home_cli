@@ -1,4 +1,4 @@
-"""`mi home` / `mi room` / `mi device` 命令。"""
+"""The `mi home` / `mi room` / `mi device` commands."""
 from __future__ import annotations
 
 import time
@@ -6,7 +6,6 @@ from typing import Annotated, Optional
 
 import typer
 
-from ..i18n import t
 from .. import render
 from ..core.cloud import CloudApi
 from ..core.registry import Device, Registry
@@ -15,13 +14,14 @@ from ..render import mask
 from ..store import read_config, write_config
 from .context import AppContext, OutputOption, pick_output
 
-app = typer.Typer(help=t("设备清单"), no_args_is_help=True)
-home_app = typer.Typer(help=t("家庭"), no_args_is_help=True)
-room_app = typer.Typer(help=t("房间"), no_args_is_help=True)
-alias_app = typer.Typer(help=t("设备别名"), no_args_is_help=True)
+app = typer.Typer(help="Device list", no_args_is_help=True)
+home_app = typer.Typer(help="Home", no_args_is_help=True)
+room_app = typer.Typer(help="Room", no_args_is_help=True)
+alias_app = typer.Typer(help="Device aliases", no_args_is_help=True)
 app.add_typer(alias_app, name="alias")
 
-# 缓存超过这个时间就在用之前提醒一句（不自动刷新，免得每次命令都慢）
+# Once the cache is older than this, remind the user before using it (no automatic
+# refresh, which would slow every command down)
 STALE_AFTER = 7 * 24 * 3600
 
 
@@ -30,44 +30,44 @@ def _ctx(ctx: typer.Context) -> AppContext:
 
 
 def sync(app_ctx: AppContext) -> Registry:
-    """从云端重新拉一遍清单并落盘。"""
+    """Fetch the lists from the cloud again and persist them."""
     with app_ctx.session() as session:
         data = CloudApi(session).fetch_all()
-        # uid 只有 gethome 才给，登录时拿不到，顺手补进凭据里
+        # Only gethome returns the uid, it is not available at login; add it to the
+        # credentials while we are here
         if data.get("uid") and session.auth.uid != data["uid"]:
             auth = session.auth
             auth.uid = data["uid"]
             app_ctx.profile.write_auth(auth)
     registry = Registry.write(app_ctx.profile, data)
     render.info(
-        t(
-            "[dim]已同步 {v0} 台设备、{v1} 个家庭[/dim]",
-            v0=len(registry.devices),
-            v1=len(registry.homes),
-        )
+        f"[dim]Synced {len(registry.devices)} device(s), {len(registry.homes)} "
+        "home(s)[/dim]"
     )
     return registry
 
 
 def load_registry(app_ctx: AppContext, *, refresh: bool = False) -> Registry:
-    """拿到设备清单：优先用缓存，没有就自动同步一次。"""
+    """Get the device list: prefer the cache, sync once automatically if there is none."""
     if not refresh:
         registry = Registry.read(app_ctx.profile)
         if registry is not None:
             if registry.age > STALE_AFTER:
                 render.warn(
-                    t("设备缓存是 {v0} 天前的，需要的话跑 `mi device sync` 刷新", v0=registry.age // 86400)
+                    f"The device cache is {registry.age // 86400} day(s) old; run `mi "
+                    "device sync` to refresh if needed"
                 )
             return registry
-        render.info(t("[dim]本地还没有设备缓存，正在同步…[/dim]"))
+        render.info("[dim]No local device cache yet, syncing…[/dim]")
     return sync(app_ctx)
 
 
 def resolve(app_ctx: AppContext, ref: str, **filters: object) -> Device:
-    """解析设备，默认只在默认家庭里找。
+    """Resolve a device, by default only within the default home.
 
-    在别的家庭里找到时不静默跨家庭操作——那正是设默认家庭要避免的事——
-    而是明确告诉用户它在哪儿、怎么绕过。
+    When it is found in another home, do not silently operate across homes — exactly
+    what setting a default home is meant to prevent — but tell the user explicitly
+    where it is and how to get around it.
     """
     registry = load_registry(app_ctx)
     scope = {**app_ctx.home_filter(), **filters}
@@ -80,28 +80,20 @@ def resolve(app_ctx: AppContext, ref: str, **filters: object) -> Device:
         elsewhere = registry.filter(search=ref)
         if not elsewhere:
             raise
-        names = t("、").join(
-            t(
-                "{home_name}/{v0} 的 {label}",
-                home_name=d.home_name,
-                v0=d.room_name or '-',
-                label=d.label,
-            ) for d in elsewhere[:5]
+        names = ", ".join(
+            f"{d.home_name}/{d.room_name or '-'}: {d.label}" for d in elsewhere[:5]
         )
         raise DeviceNotFound(
-            t(
-                "默认家庭「{name}」里没有 `{ref}`，但在 {names} 找到了",
-                name=home['name'],
-                ref=ref,
-                names=names,
-            ),
-            hint=t("加 --all-homes 跨家庭操作，或用 `mi home use` 换默认家庭"),
+            f"The default home \"{home['name']}\" has no `{ref}`, but it was found in "
+            f"{names}.",
+            hint="Add --all-homes to work across homes, or switch the default home "
+                 "with `mi home use`",
         ) from None
 
 
 @home_app.command("list")
 def home_list(ctx: typer.Context, output: OutputOption = None) -> None:
-    """列出家庭。"""
+    """List homes."""
     app_ctx = _ctx(ctx)
     registry = load_registry(app_ctx)
     counts: dict[str, int] = {}
@@ -127,11 +119,11 @@ def home_list(ctx: typer.Context, output: OutputOption = None) -> None:
         return
     rows = [
         {
-            "家庭": home["home_name"]
+            "Home": home["home_name"]
             + (" *" if default and default["id"] == home["home_id"] else ""),
-            "房间数": len(home.get("rooms") or []),
-            "设备数": counts.get(home["home_id"], 0),
-            "共享": t("是") if home.get("shared") else t("否"),
+            "Rooms": len(home.get("rooms") or []),
+            "Devices": counts.get(home["home_id"], 0),
+            "Shared": "yes" if home.get("shared") else "no",
             "home_id": home["home_id"],
         }
         for home in registry.homes
@@ -142,10 +134,10 @@ def home_list(ctx: typer.Context, output: OutputOption = None) -> None:
 @room_app.command("list")
 def room_list(
     ctx: typer.Context,
-    home: Annotated[Optional[str], typer.Option("--home", help=t("限定家庭"))] = None,
+    home: Annotated[Optional[str], typer.Option("--home", help="Only this home")] = None,
     output: OutputOption = None,
 ) -> None:
-    """列出房间。"""
+    """List rooms."""
     app_ctx = _ctx(ctx)
     registry = load_registry(app_ctx)
     counts: dict[tuple[str, str], int] = {}
@@ -172,9 +164,9 @@ def room_list(
                 }
                 if fmt.value in ("json", "yaml")
                 else {
-                    "家庭": item["home_name"],
-                    "房间": room["room_name"],
-                    "设备数": count,
+                    "Home": item["home_name"],
+                    "Room": room["room_name"],
+                    "Devices": count,
                     "room_id": room["room_id"],
                 }
             )
@@ -184,25 +176,25 @@ def room_list(
 @app.command("list")
 def device_list(
     ctx: typer.Context,
-    home: Annotated[Optional[str], typer.Option("--home", help=t("限定家庭"))] = None,
-    room: Annotated[Optional[str], typer.Option("--room", help=t("限定房间"))] = None,
-    model: Annotated[Optional[str], typer.Option("--model", help=t("限定型号"))] = None,
+    home: Annotated[Optional[str], typer.Option("--home", help="Only this home")] = None,
+    room: Annotated[Optional[str], typer.Option("--room", help="Only this room")] = None,
+    model: Annotated[Optional[str], typer.Option("--model", help="Only this model")] = None,
     search: Annotated[
-        Optional[str], typer.Option("--search", "-s", help=t("按名称/型号搜索"))
+        Optional[str], typer.Option("--search", "-s", help="Search by name / model")
     ] = None,
     online: Annotated[
         Optional[bool],
-        typer.Option("--online/--offline", help=t("只看在线/离线设备")),
+        typer.Option("--online/--offline", help="Only online / offline devices"),
     ] = None,
     wide: Annotated[
-        bool, typer.Option("--wide", "-w", help=t("多显示 did、IP、固件"))
+        bool, typer.Option("--wide", "-w", help="Also show did, IP and firmware")
     ] = False,
     refresh: Annotated[
-        bool, typer.Option("--refresh", help=t("先从云端刷新缓存"))
+        bool, typer.Option("--refresh", help="Refresh the cache from the cloud first")
     ] = False,
     output: OutputOption = None,
 ) -> None:
-    """列出设备。"""
+    """List devices."""
     app_ctx = _ctx(ctx)
     registry = load_registry(app_ctx, refresh=refresh)
     scope = {} if home else app_ctx.home_filter()
@@ -222,23 +214,17 @@ def device_list(
     render.output([device.summary(wide=wide) for device in devices], fmt)
     if fmt.value == "table":
         current = None if home else app_ctx.default_home()
-        note = t("，只看「{name}」，加 --all-homes 看全部", name=current['name']) if current else ""
-        render.info(
-            t(
-                "[dim]共 {n_devices} 台{note}[/dim]",
-                n_devices=len(devices),
-                note=note,
-            )
-        )
+        note = f", showing only \"{current['name']}\"; add --all-homes to see everything" if current else ""
+        render.info(f"[dim]{len(devices)} device(s) in total{note}[/dim]")
 
 
 @app.command("show")
 def device_show(
     ctx: typer.Context,
-    device: Annotated[str, typer.Argument(help=t("设备名称、别名或 did"))],
+    device: Annotated[str, typer.Argument(help="Device name, alias or did")],
     output: OutputOption = None,
 ) -> None:
-    """看一台设备的详情。"""
+    """Show the details of one device."""
     app_ctx = _ctx(ctx)
     target = resolve(app_ctx, device)
     fmt = pick_output(app_ctx, output)
@@ -250,56 +236,59 @@ def device_show(
 
 @app.command("sync")
 def device_sync(ctx: typer.Context) -> None:
-    """从云端重新拉取家庭、房间、设备清单。"""
+    """Re-fetch homes, rooms and the device list from the cloud."""
     app_ctx = _ctx(ctx)
     started = time.time()
     registry = sync(app_ctx)
     render.success(
-        t("同步完成，{v0} 台设备，耗时 {v1:.1f}s", v0=len(registry.devices), v1=time.time() - started)
+        f"Sync complete: {len(registry.devices)} device(s) in "
+        f"{time.time() - started:.1f}s"
     )
 
 
 @app.command("token")
 def device_token(
     ctx: typer.Context,
-    device: Annotated[str, typer.Argument(help=t("设备名称、别名或 did"))],
+    device: Annotated[str, typer.Argument(help="Device name, alias or did")],
     show: Annotated[
-        bool, typer.Option("--show-secrets", help=t("明文显示（默认打码）"))
+        bool, typer.Option("--show-secrets", help="Show in plain text (masked by "
+                                                  "default)")
     ] = False,
 ) -> None:
-    """打印设备的局域网 token。"""
+    """Print a device's LAN token."""
     app_ctx = _ctx(ctx)
     target = resolve(app_ctx, device)
     if not target.token:
-        raise UsageError(t("{label} 没有局域网 token", label=target.label))
+        raise UsageError(f"{target.label} has no LAN token")
     print(target.token if show else mask(target.token))
 
 
 @alias_app.command("set")
 def alias_set(
     ctx: typer.Context,
-    device: Annotated[str, typer.Argument(help=t("设备名称或 did"))],
-    alias: Annotated[str, typer.Argument(help=t("要设置的别名"))],
+    device: Annotated[str, typer.Argument(help="Device name or did")],
+    alias: Annotated[str, typer.Argument(help="Alias to set")],
 ) -> None:
-    """给设备起个短名字。"""
+    """Give a device a short name."""
     app_ctx = _ctx(ctx)
     target = resolve(app_ctx, device)
     aliases = app_ctx.profile.read_aliases()
     aliases[alias] = target.did
     app_ctx.profile.write_aliases(aliases)
-    render.success(t("{label} → 别名 `{alias}`", label=target.label, alias=alias))
+    render.success(f"{target.label} → alias `{alias}`")
 
 
 @alias_app.command("list")
 def alias_list(ctx: typer.Context, output: OutputOption = None) -> None:
-    """列出所有别名。"""
+    """List all aliases."""
     app_ctx = _ctx(ctx)
     registry = load_registry(app_ctx)
     by_did = {device.did: device for device in registry.devices}
     rows = [
         {
-            "别名": alias,
-            "设备": by_did[did].name if did in by_did else t("（已不在清单里）"),
+            "Alias": alias,
+            "Device": by_did[did].name if did in by_did else "(no longer in the device "
+                                                         "list)",
             "did": did,
         }
         for alias, did in sorted(app_ctx.profile.read_aliases().items())
@@ -309,52 +298,54 @@ def alias_list(ctx: typer.Context, output: OutputOption = None) -> None:
 
 @alias_app.command("rm")
 def alias_rm(ctx: typer.Context, alias: str) -> None:
-    """删除别名。"""
+    """Delete an alias."""
     app_ctx = _ctx(ctx)
     aliases = app_ctx.profile.read_aliases()
     if alias not in aliases:
-        raise UsageError(t("别名 `{alias}` 不存在", alias=alias))
+        raise UsageError(f"Alias `{alias}` does not exist")
     aliases.pop(alias)
     app_ctx.profile.write_aliases(aliases)
-    render.success(t("已删除别名 `{alias}`", alias=alias))
+    render.success(f"Deleted alias `{alias}`")
 
 
 @home_app.command("use")
 def home_use(
     ctx: typer.Context,
     name: Annotated[
-        Optional[str], typer.Argument(help=t("家庭名称或 home_id，不给则显示当前默认"))
+        Optional[str], typer.Argument(help="Home name or home_id; shows the current "
+                                           "default when omitted")
     ] = None,
     clear: Annotated[
-        bool, typer.Option("--clear", help=t("取消默认家庭，回到全部家庭"))
+        bool, typer.Option("--clear", help="Clear the default home and go back to all "
+                                           "homes")
     ] = False,
 ) -> None:
-    """设置默认家庭。设了之后设备解析、device list、room list 都只看这个家庭。"""
+    """Set the default home. Once set, device lookup, device list and room list only look at this home."""
     app_ctx = _ctx(ctx)
     config = read_config(app_ctx.root)
 
     if clear:
         config.pop("home", None)
         write_config(config, app_ctx.root)
-        render.success(t("已取消默认家庭，现在所有家庭的设备都可见"))
+        render.success("Default home cleared; devices of all homes are now visible")
         return
 
     if not name:
         current = app_ctx.default_home()
         if current:
-            render.info(t("当前默认家庭：{name}（{id}）", name=current['name'], id=current['id']))
+            render.info(f"Current default home: {current['name']} ({current['id']})")
         else:
-            render.info(t("还没有设默认家庭，所有家庭的设备都可见"))
+            render.info("No default home has been set; devices of all homes are visible")
         return
 
     home = load_registry(app_ctx).find_home(name)
     config["home"] = {"id": home["home_id"], "name": home["home_name"]}
     write_config(config, app_ctx.root)
-    render.success(t("默认家庭已设为「{home_name}」", home_name=home['home_name']))
+    render.success(f"Default home set to \"{home['home_name']}\"")
 
 
 def _clear_default_home(app_ctx: AppContext) -> bool:
-    """清掉配置里的默认家庭，返回之前是否设过。"""
+    """Remove the default home from the config; returns whether one was set before."""
     config = read_config(app_ctx.root)
     if config.pop("home", None) is None:
         return False
@@ -364,27 +355,27 @@ def _clear_default_home(app_ctx: AppContext) -> bool:
 
 @home_app.command("unset")
 def home_unset(ctx: typer.Context) -> None:
-    """取消默认家庭，回到全部家庭（等同 `mi home use --clear`）。"""
+    """Clear the default home and go back to all homes (same as `mi home use --clear`)."""
     app_ctx = _ctx(ctx)
     if _clear_default_home(app_ctx):
-        render.success(t("已取消默认家庭，现在所有家庭的设备都可见"))
+        render.success("Default home cleared; devices of all homes are now visible")
     else:
-        render.info(t("当前没有设默认家庭，所有家庭的设备都可见"))
+        render.info("No default home is set; devices of all homes are visible")
 
 
 @home_app.command("select")
 def home_select(ctx: typer.Context) -> None:
-    """交互式选择默认家庭（也可以选择取消默认家庭）。"""
+    """Pick the default home interactively (or choose to clear it)."""
     app_ctx = _ctx(ctx)
     homes = load_registry(app_ctx).homes
     if not homes:
         raise UsageError(
-            t("没有可选的家庭"), hint=t("先跑 `mi device sync` 从云端同步")
+            "No homes to choose from", hint="Run `mi device sync` first to sync from the cloud"
         )
     if not render.is_tty():
         raise UsageError(
-            t("select 需要交互式终端"),
-            hint=t("脚本里请用 `mi home use <家庭>` 或 `mi home unset`"),
+            "select needs an interactive terminal",
+            hint="In scripts use `mi home use <home>` or `mi home unset`",
         )
 
     default = app_ctx.default_home()
@@ -392,38 +383,27 @@ def home_select(ctx: typer.Context) -> None:
     for device in load_registry(app_ctx).devices:
         counts[device.home_id] = counts.get(device.home_id, 0) + 1
 
-    render.info(t("选择默认家庭："))
+    render.info("Choose the default home:")
     for index, home in enumerate(homes, start=1):
         mark = " *" if default and default["id"] == home["home_id"] else ""
         render.info(
-            t(
-                "  {index}. {home_name}{mark}（{v0} 台设备）",
-                index=index,
-                home_name=home['home_name'],
-                mark=mark,
-                v0=counts.get(home['home_id'], 0),
-            )
+            f"  {index}. {home['home_name']}{mark} ({counts.get(home['home_id'], 0)} "
+            "device(s))"
         )
-    render.info(t("  0. 取消默认家庭（所有家庭都可见）"))
+    render.info("  0. No default home (all homes visible)")
 
-    choice = typer.prompt(t("输入编号"), type=int)
+    choice = typer.prompt("Enter a number", type=int)
     if choice == 0:
         if _clear_default_home(app_ctx):
-            render.success(t("已取消默认家庭，现在所有家庭的设备都可见"))
+            render.success("Default home cleared; devices of all homes are now visible")
         else:
-            render.info(t("当前没有设默认家庭，所有家庭的设备都可见"))
+            render.info("No default home is set; devices of all homes are visible")
         return
     if not 1 <= choice <= len(homes):
-        raise UsageError(
-            t(
-                "编号 {choice} 超出范围（0–{n_homes}）",
-                choice=choice,
-                n_homes=len(homes),
-            )
-        )
+        raise UsageError(f"Number {choice} is out of range (0–{len(homes)})")
 
     home = homes[choice - 1]
     config = read_config(app_ctx.root)
     config["home"] = {"id": home["home_id"], "name": home["home_name"]}
     write_config(config, app_ctx.root)
-    render.success(t("默认家庭已设为「{home_name}」", home_name=home['home_name']))
+    render.success(f"Default home set to \"{home['home_name']}\"")

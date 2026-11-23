@@ -1,4 +1,4 @@
-"""spec 解析与取值转换。"""
+"""Spec parsing and value conversion."""
 import pytest
 
 from mi_home_cli.core.spec import (
@@ -82,10 +82,10 @@ INSTANCE = {
 }
 
 TRANSLATIONS = {
-    "service:002:property:003": "模式",
-    "service:002:property:003:valuelist:000": "自动",
-    "service:002:property:003:valuelist:001": "睡眠",
-    "service:002:action:001": "切换",
+    "service:002:property:003": "Operating Mode",
+    "service:002:property:003:valuelist:000": "Automatic",
+    "service:002:property:003:valuelist:001": "Sleeping",
+    "service:002:action:001": "Toggle Power",
 }
 
 
@@ -108,27 +108,28 @@ def test_parses_services_properties_actions_events(spec: DeviceSpec):
     assert prop.readable and prop.writable and not prop.notifiable
 
 
-def test_applies_chinese_translations(spec: DeviceSpec):
+def test_applies_translations(spec: DeviceSpec):
     prop = spec.find_property("2.3")
-    assert prop.description == "模式"
-    assert [item.description for item in prop.value_list] == ["自动", "睡眠"]
-    assert spec.find_action("2.1").description == "切换"
+    assert prop.description == "Operating Mode"
+    assert [item.description for item in prop.value_list] == ["Automatic", "Sleeping"]
+    assert spec.find_action("2.1").description == "Toggle Power"
 
 
 def test_find_property_by_full_name_and_bare_name(spec: DeviceSpec):
     assert spec.find_property("screen.brightness").ref == "6.2"
     assert spec.find_property("brightness").ref == "6.2"
-    assert spec.find_property("模式").ref == "2.3"
+    assert spec.find_property("Operating Mode").ref == "2.3"
 
 
 def test_bare_name_prefers_primary_service(spec: DeviceSpec):
-    """`on` 在主体和屏幕上都有，设备类型是 air-purifier，取主体那个。"""
+    """`on` exists on both the main body and the screen; the device type is air-purifier, so the main one is taken."""
     assert spec.find_property("on").ref == "2.1"
     assert spec.find_property("screen.on").ref == "6.1"
 
 
 def test_ambiguous_reference_raises(spec: DeviceSpec):
-    # 两个服务都叫 x 的情况：构造一个没有主服务偏好的 spec
+    # the case of two services both called x: build a spec without a main-service
+    # preference
     instance = {**INSTANCE, "type": "urn:miot-spec-v2:device:gateway:0:x:1"}
     other = DeviceSpec(instance["type"], instance, {})
     with pytest.raises(AmbiguousReference):
@@ -144,9 +145,9 @@ def test_unknown_property(spec: DeviceSpec):
 
 def test_parse_bool_accepts_common_words(spec: DeviceSpec):
     prop = spec.find_property("2.1")
-    for word in ("on", "true", "1", "开", "打开"):
+    for word in ("on", "true", "1", "yes"):
         assert parse_value(prop, word) is True
-    for word in ("off", "false", "0", "关"):
+    for word in ("off", "false", "0", "no"):
         assert parse_value(prop, word) is False
     with pytest.raises(InvalidValue):
         parse_value(prop, "maybe")
@@ -154,11 +155,11 @@ def test_parse_bool_accepts_common_words(spec: DeviceSpec):
 
 def test_parse_enum_by_description_or_value(spec: DeviceSpec):
     prop = spec.find_property("2.3")
-    assert parse_value(prop, "睡眠") == 3
-    assert parse_value(prop, "Sleep") == 3  # 英文原文也认
+    assert parse_value(prop, "Sleeping") == 3
+    assert parse_value(prop, "Sleep") == 3  # the instance's original text is accepted too
     assert parse_value(prop, "3") == 3
     with pytest.raises(InvalidValue):
-        parse_value(prop, "狂暴")
+        parse_value(prop, "berserk")
 
 
 def test_parse_number_checks_range(spec: DeviceSpec):
@@ -171,8 +172,8 @@ def test_parse_number_checks_range(spec: DeviceSpec):
 
 
 def test_format_value(spec: DeviceSpec):
-    assert format_value(spec.find_property("2.1"), True) == "开"
-    assert format_value(spec.find_property("2.3"), 3) == "睡眠(3)"
+    assert format_value(spec.find_property("2.1"), True) == "on"
+    assert format_value(spec.find_property("2.3"), 3) == "Sleeping(3)"
     assert format_value(spec.find_property("screen.brightness"), 60) == "60%"
     assert format_value(spec.find_property("2.4"), None) == "-"
 
@@ -182,17 +183,17 @@ def test_unit_symbol():
     assert unit_symbol("kelvin") == "K"
     assert unit_symbol("none") == ""
     assert unit_symbol(None) == ""
-    assert unit_symbol("怪单位") == "怪单位"
+    assert unit_symbol("weird-unit") == "weird-unit"
 
 
 def test_range_text(spec: DeviceSpec):
     assert spec.find_property("screen.brightness").range_text() == "1~100 step 1"
-    assert spec.find_property("2.3").range_text() == "0=自动 3=睡眠"
+    assert spec.find_property("2.3").range_text() == "0=Automatic 3=Sleeping"
     assert spec.find_property("2.1").range_text() == "-"
 
 
 def test_verify_after_write_reports_actual_values(monkeypatch, spec):
-    """写完回读：以设备的真实状态为准，而不是只信返回码。"""
+    """Read back after writing: the device's real state counts, not just the return code."""
     from mi_home_cli.cli.prop import verify_after_write
 
     prop = spec.find_property("screen.brightness")
@@ -201,14 +202,15 @@ def test_verify_after_write_reports_actual_values(monkeypatch, spec):
     class FakeApi:
         def get_props(self, params):
             calls.append(params)
-            # 第一次还是旧值，第二次才跟上——模拟上报延迟
+            # still the old value the first time, caught up the second time — simulates
+            # a reporting delay
             value = 30 if len(calls) == 1 else 60
             return [{"siid": 6, "piid": 2, "value": value, "code": 0}]
 
     monkeypatch.setattr("time.sleep", lambda _: None)
     actual = verify_after_write(FakeApi(), "d1", [(prop, 60)], delay=0)
     assert actual[(6, 2)] == 60
-    assert len(calls) == 2  # 第一次不一致，重试了一次
+    assert len(calls) == 2  # mismatch the first time, retried once
 
 
 def test_verify_skips_unreadable_properties(monkeypatch, spec):
@@ -219,38 +221,39 @@ def test_verify_skips_unreadable_properties(monkeypatch, spec):
 
     class Boom:
         def get_props(self, params):
-            raise AssertionError("不该为只写属性发读请求")
+            raise AssertionError("must not send a read request for a write-only property")
 
     monkeypatch.setattr("time.sleep", lambda _: None)
     assert verify_after_write(Boom(), "d1", [(write_only, 3)], delay=0) == {}
 
 
 def test_float_is_shown_with_significant_digits(spec):
-    """设备回的温度是 23.700001，原样显示既难看又像精度错觉。
+    """A device reports a temperature as 23.700001; showing that as is is ugly and looks like false precision.
 
-    用有效数字而不是固定小数位：固定 2 位会把 0.019 mg/m³ 舍成 0.02。
+    Significant digits rather than fixed decimals: 2 fixed decimals would round
+    0.019 mg/m³ to 0.02.
     """
     from mi_home_cli.core.spec import Property, format_value
 
     temperature = Property(
-        siid=3, piid=2, name="temperature", description="温度", format="float",
+        siid=3, piid=2, name="temperature", description="Temperature", format="float",
         access=["read"], service="environment", unit="celsius",
     )
     assert format_value(temperature, 23.700001) == "23.7℃"
     assert format_value(temperature, 57.0) == "57℃"
 
     hcho = Property(
-        siid=3, piid=6, name="hcho-density", description="甲醛", format="float",
+        siid=3, piid=6, name="hcho-density", description="Formaldehyde", format="float",
         access=["read"], service="environment", unit="mg/m3",
     )
     assert format_value(hcho, 0.019) == "0.019 mg/m³"
 
 
 def test_action_output_gets_property_names():
-    """动作返回的是一串裸值，配上属性名才看得懂。
+    """An action returns a list of bare values, which only make sense with property names attached.
 
-    典型场景：支持官方推流的摄像机，start-rtsp-stream 返回
-    [地址, 快照地址, 过期时间]。
+    Typical case: a camera with official streaming, whose start-rtsp-stream returns
+    [address, snapshot address, expiry time].
     """
     from mi_home_cli.cli.prop import describe_action_output
 
@@ -292,15 +295,15 @@ def test_action_output_gets_property_names():
     spec = DeviceSpec(instance["type"], instance, {})
     action = spec.find_action("start-rtsp-stream")
 
-    # 裸值数组：按 out 的顺序配名字
+    # array of bare values: names are attached in the order of out
     assert describe_action_output(spec, action, ["rtsp://x", "2026-08-20"]) == {
         "stream-address": "rtsp://x",
         "expiration-time": "2026-08-20",
     }
-    # {piid, value} 形式也认
+    # the {piid, value} form is accepted too
     assert describe_action_output(
         spec, action, [{"piid": 7, "value": "rtsp://y"}]
     ) == {"stream-address": "rtsp://y"}
-    # 数量对不上就原样给出去，别猜
+    # if the counts do not line up, hand it out as is; do not guess
     assert describe_action_output(spec, action, [1, 2, 3]) == [1, 2, 3]
     assert describe_action_output(spec, action, []) == "-"

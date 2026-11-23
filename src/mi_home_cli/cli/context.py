@@ -1,4 +1,4 @@
-"""命令间共享的全局上下文。"""
+"""Global context shared between commands."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -7,7 +7,6 @@ from typing import Annotated, Optional
 
 import typer
 
-from ..i18n import t
 from ..core import const
 from ..core.session import Session
 from ..render import OutputFormat
@@ -26,8 +25,9 @@ class AppContext:
     dry_run: bool = False
     all_homes: bool = False
     verify: bool = False
-    # 默认走云端：局域网要先探活、失败还要回落，首次命中的等待都算在用户头上。
-    # 想要低延迟的人显式选 auto/lan，或 `mi config set channel auto`。
+    # Default to the cloud: the LAN needs a liveness probe first and a fallback on
+    # failure, and the wait of the first hit would all land on the user. Those who
+    # want low latency pick auto/lan explicitly, or `mi config set channel auto`.
     channel: str = "cloud"
 
     @property
@@ -38,7 +38,7 @@ class AppContext:
         return Session(self.profile, region=self.region, timeout=self.timeout)
 
     def default_home(self) -> dict[str, str] | None:
-        """配置里设的默认家庭，`--all-homes` 可临时忽略。"""
+        """The default home set in the config; `--all-homes` ignores it temporarily."""
         if self.all_homes:
             return None
         home = read_config(self.root).get("home")
@@ -47,12 +47,12 @@ class AppContext:
         return None
 
     def home_filter(self) -> dict[str, str]:
-        """喂给 Registry.filter / resolve 的家庭过滤条件。"""
+        """The home filter fed to Registry.filter / resolve."""
         home = self.default_home()
         return {"home_id": home["id"]} if home else {}
 
     def resolved_region(self) -> str:
-        """命令行 > 已登录的 profile > 配置文件 > cn。"""
+        """Command line > logged-in profile > config file > cn."""
         if self.region:
             return self.region
         auth = self.profile.read_auth()
@@ -65,11 +65,12 @@ def default_profile_name(root: Path | None = None) -> str:
     return read_config(root or config_dir()).get("profile", "default")
 
 
-# 子命令上的 -o：不写就沿用全局值。click 的分组只认子命令之前的全局参数，
-# 而 `mi auth status -o json` 是更自然的写法，所以这里重复声明一次。
+# -o on subcommands: when omitted, the global value is used. click groups only
+# accept global options before the subcommand, but `mi auth status -o json` is
+# the more natural way to write it, so it is declared once more here.
 OutputOption = Annotated[
     Optional[OutputFormat],
-    typer.Option("--output", "-o", envvar="MI_OUTPUT", help=t("输出格式")),
+    typer.Option("--output", "-o", envvar="MI_OUTPUT", help="Output format"),
 ]
 
 
@@ -78,10 +79,10 @@ def pick_output(
     override: OutputFormat | None,
     default: OutputFormat | None = None,
 ) -> OutputFormat:
-    """子命令上的 -o 优先；没写就用全局值。
+    """-o on the subcommand wins; without it the global value is used.
 
-    default 用于「表格没意义」的命令（比如 spec dump），此时只有用户显式指定
-    过全局 -o 才尊重全局值。
+    default is for commands where a table makes no sense (such as spec dump); there
+    the global value is only respected if the user explicitly passed a global -o.
     """
     if override:
         return override
@@ -90,22 +91,25 @@ def pick_output(
     return ctx.output
 
 
-# 写操作的两个开关同样重复声明在子命令上。`mi set 灯 on=true --dry-run` 是任何人
-# （和任何 agent）都会自然写出的形式，只能放在子命令前面属于反直觉。
+# The two write switches are likewise declared again on subcommands.
+# `mi set lamp on=true --dry-run` is what anyone (and any agent) would naturally
+# write; only allowing them before the subcommand would be counter-intuitive.
 DryRunOption = Annotated[
     Optional[bool],
-    typer.Option("--dry-run/--no-dry-run", help=t("只解析和校验，不真的下发")),
+    typer.Option("--dry-run/--no-dry-run", help="Parse and validate only; do not send "
+                                                "anything"),
 ]
 VerifyOption = Annotated[
     Optional[bool],
-    typer.Option("--verify/--no-verify", help=t("写入后回读确认真实状态")),
+    typer.Option("--verify/--no-verify", help="Read back after writing to confirm the "
+                                              "real state"),
 ]
 
 
 def apply_write_flags(
     ctx: AppContext, dry_run: bool | None = None, verify: bool | None = None
 ) -> AppContext:
-    """子命令上的开关覆盖全局值。"""
+    """Switches on the subcommand override the global values."""
     if dry_run is not None:
         ctx.dry_run = dry_run
     if verify is not None:

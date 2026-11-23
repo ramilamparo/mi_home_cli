@@ -1,4 +1,4 @@
-"""CLI 入口。"""
+"""CLI entry point."""
 from __future__ import annotations
 
 import sys
@@ -7,7 +7,6 @@ from typing import Annotated, Optional
 
 import typer
 
-from ..i18n import localize_typer, t
 from .. import __version__, render
 from ..core import const
 from ..errors import MiCliError
@@ -25,7 +24,7 @@ from . import doctor as doctor_cli
 from .context import AppContext, OutputOption, default_profile_name
 
 app = typer.Typer(
-    help=t("命令行控制米家设备"),
+    help="Control Xiaomi Home (Mi Home) devices from the command line",
     no_args_is_help=True,
     context_settings={"help_option_names": ["-h", "--help"]},
 )
@@ -38,7 +37,8 @@ app.add_typer(spec_cli.app, name="spec")
 app.add_typer(config_cli.app, name="config")
 app.add_typer(lan_cli.app, name="lan")
 
-# 高频命令挂在顶层：mi get / mi set / mi action / mi on|off|toggle
+# High-frequency commands live at the top level: mi get / mi set / mi action / mi
+# on|off|toggle
 app.command("get")(prop_cli.get)
 app.command("set")(prop_cli.set_)
 app.command("action")(prop_cli.action)
@@ -57,43 +57,47 @@ def main_callback(
     ctx: typer.Context,
     profile: Annotated[
         Optional[str],
-        typer.Option("--profile", "-p", envvar="MI_PROFILE", help=t("使用哪个 profile")),
+        typer.Option("--profile", "-p", envvar="MI_PROFILE", help="Profile to use"),
     ] = None,
     region: Annotated[
         Optional[str],
         typer.Option(
             "--region", "-r", envvar="MI_REGION",
-            help=t("区域：") + "/".join(const.CLOUD_SERVERS),
+            help="Region: " + "/".join(const.CLOUD_SERVERS),
         ),
     ] = None,
     output: Annotated[
         Optional[OutputFormat],
-        typer.Option("--output", "-o", envvar="MI_OUTPUT", help=t("输出格式")),
+        typer.Option("--output", "-o", envvar="MI_OUTPUT", help="Output format"),
     ] = None,
     timeout: Annotated[
-        float, typer.Option("--timeout", help=t("单次请求超时（秒）"))
+        float, typer.Option("--timeout", help="Timeout per request (seconds)")
     ] = float(const.HTTP_TIMEOUT),
     verbose: Annotated[bool, typer.Option("--verbose", "-v")] = False,
     quiet: Annotated[bool, typer.Option("--quiet", "-q")] = False,
     dry_run: Annotated[
-        bool, typer.Option("--dry-run", help=t("只解析和校验，不真的下发"))
+        bool, typer.Option("--dry-run", help="Parse and validate only; do not send "
+                                             "anything")
     ] = False,
     channel: Annotated[
         Optional[str],
         typer.Option(
             "--channel",
             envvar="MI_CHANNEL",
-            help=t("控制通道：cloud（默认）/ auto（局域网优先，回落云端）/ lan"),
+            help="Control channel: cloud (default) / auto (LAN first, fall back to "
+                 "cloud) / lan",
         ),
     ] = None,
     all_homes: Annotated[
-        bool, typer.Option("--all-homes", help=t("忽略默认家庭，跨所有家庭操作"))
+        bool, typer.Option("--all-homes", help="Ignore the default home and work "
+                                               "across all homes")
     ] = False,
     verify: Annotated[
         bool,
         typer.Option(
             "--verify/--no-verify",
-            help=t("写入后回读确认真实状态（默认不回读，省一次请求）"),
+            help="Read back after writing to confirm the real state (off by default, "
+                 "saves one request)",
         ),
     ] = False,
 ) -> None:
@@ -116,18 +120,14 @@ def main_callback(
 
 @app.command()
 def version() -> None:
-    """打印版本。"""
+    """Print the version."""
     print(f"mi-home-cli {__version__}")
 
 
 @app.command()
 def doctor(ctx: typer.Context, output: OutputOption = None) -> None:
-    """检查登录所需的环境（端口、域名解析、网络、时钟）。"""
+    """Check the environment needed for login (port, DNS, network, clock)."""
     doctor_cli.run(ctx, output)
-
-
-# 命令的 help 来自 docstring，全部注册完之后统一换成当前语言
-localize_typer(app)
 
 
 def main() -> None:
@@ -136,10 +136,10 @@ def main() -> None:
     except MiCliError as err:
         render.error(err.message)
         if err.hint:
-            render.info(t("[dim]提示：{hint}[/dim]", hint=err.hint))
+            render.info(f"[dim]Hint: {err.hint}[/dim]")
         sys.exit(err.exit_code)
     except KeyboardInterrupt:
-        render.info(t("\n已取消"))
+        render.info("\nCancelled")
         sys.exit(130)
 
 

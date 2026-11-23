@@ -1,17 +1,16 @@
-"""统一错误类型与退出码。
+"""Unified error types and exit codes.
 
-退出码约定见 docs/design.md §5。
+For the exit code conventions see docs/design.md §5.
 """
 from __future__ import annotations
 
-from .i18n import t
-
 
 class MiCliError(Exception):
-    """所有可预期错误的基类，携带退出码。
+    """Base class of all expected errors; carries an exit code.
 
-    退出码由异常自己带着，cli/app.py 的 main() 负责打印并按它退出。
-    （不继承 click 的异常：typer 0.27 起把 click 内置成了私有模块。）
+    The exit code travels with the exception itself; main() in cli/app.py prints the
+    error and exits with it. (It does not inherit from click's exceptions: since typer
+    0.27 click is vendored as a private module.)
     """
 
     exit_code: int = 1
@@ -51,7 +50,7 @@ class NetworkError(MiCliError):
 
 
 class CloudError(MiCliError):
-    """云端返回了非 0 的 code。"""
+    """The cloud returned a non-zero code."""
 
     exit_code = 9
 
@@ -73,8 +72,8 @@ class NotAuthenticated(MiCliError):
 
     def __init__(
         self,
-        message: str = t("未登录或登录已失效"),
+        message: str = "Not logged in, or the login has expired",
         *,
-        hint: str | None = t("运行 `mi auth login` 重新登录"),
+        hint: str | None = "Run `mi auth login` to log in again",
     ) -> None:
         super().__init__(message, hint=hint)

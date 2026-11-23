@@ -1,9 +1,10 @@
-"""扫描 miot-spec 上所有摄像机/门铃型号，找出带官方推流服务的那些。
+"""Scan all camera/doorbell models on miot-spec and find those with the official streaming services.
 
-结论会随小米发布新 spec 变化，所以这份脚本比一张静态表更有用：
+The result changes as Xiaomi publishes new specs, so this script is more useful than
+a static table:
 
-    uv run python tools/scan_stream_models.py            # 打印表格
-    uv run python tools/scan_stream_models.py --json     # 输出 JSON
+    uv run python tools/scan_stream_models.py            # print a table
+    uv run python tools/scan_stream_models.py --json     # output JSON
 """
 from __future__ import annotations
 
@@ -16,8 +17,8 @@ import httpx
 INSTANCES = "https://miot-spec.org/miot-spec-v2/instances"
 INSTANCE = "https://miot-spec.org/miot-spec-v2/instance"
 DEVICE_TYPES = (":device:camera:", ":device:video-doorbell:")
-# 这两个服务本来是给 Google Home / Alexa 用的，但它们是普通的 spec 服务，
-# 任何能调 spec 动作的客户端都能用
+# These two services were originally meant for Google Home / Alexa, but they
+# are ordinary spec services that any client able to call spec actions can use
 STREAM_SERVICE_PREFIX = "camera-stream-for-"
 
 
@@ -59,7 +60,8 @@ def scan(timeout: float = 30.0, workers: int = 16) -> dict[str, dict]:
                 found[model] = info
     for info in found.values():
         starts = [a for a in info["actions"] if a.startswith("start-")]
-        # 拿得到地址的（start-rtsp/hls-stream）和要走 WebRTC 协商的，用法完全不同
+        # Models that hand out an address (start-rtsp/hls-stream) and models that need
+        # WebRTC negotiation are used completely differently
         info["kind"] = "url" if starts else "webrtc"
     return dict(sorted(found.items()))
 
@@ -71,10 +73,10 @@ def main() -> None:
         return
     url_models = {k: v for k, v in found.items() if v["kind"] == "url"}
     webrtc = {k: v for k, v in found.items() if v["kind"] == "webrtc"}
-    print(f"能直接拿到推流地址的型号（{len(url_models)}）：")
+    print(f"Models that hand out a stream address directly ({len(url_models)}):")
     for model, info in url_models.items():
-        print(f"  {model:30} {'、'.join(info['actions'])}")
-    print(f"\n只提供 WebRTC 协商的型号（{len(webrtc)}，拿不到现成地址）：")
+        print(f"  {model:30} {', '.join(info['actions'])}")
+    print(f"\nModels that only offer WebRTC negotiation ({len(webrtc)}, no ready-made address):")
     for model in webrtc:
         print(f"  {model}")
 

@@ -1,4 +1,4 @@
-"""`mi lan`：局域网直连的发现与探测。"""
+"""`mi lan`: discovery and probing for direct LAN control."""
 from __future__ import annotations
 
 import json
@@ -7,7 +7,6 @@ from typing import Annotated, Optional
 
 import typer
 
-from ..i18n import t
 from .. import render
 from ..core import lan as lan_core
 from ..core.channel import (
@@ -22,7 +21,7 @@ from ..render import OutputFormat
 from .context import AppContext, OutputOption, pick_output
 from .device import load_registry, resolve
 
-app = typer.Typer(help=t("局域网直连"), no_args_is_help=True)
+app = typer.Typer(help="Direct LAN control", no_args_is_help=True)
 
 
 def _ctx(ctx: typer.Context) -> AppContext:
@@ -33,21 +32,23 @@ def _ctx(ctx: typer.Context) -> AppContext:
 def lan_discover(
     ctx: typer.Context,
     timeout: Annotated[
-        float, typer.Option("--timeout", help=t("等待应答的秒数"))
+        float, typer.Option("--timeout", help="Seconds to wait for replies")
     ] = 3.0,
     address: Annotated[
         Optional[str],
-        typer.Option("--address", help=t("广播地址，默认 255.255.255.255")),
+        typer.Option("--address", help="Broadcast address, default 255.255.255.255"),
     ] = None,
     output: OutputOption = None,
 ) -> None:
-    """广播扫描局域网上的米家设备，并和设备清单对上号。"""
+    """Broadcast-scan the LAN for Mi Home devices and match them to the device list."""
     app_ctx = _ctx(ctx)
     found = lan_core.discover(timeout, address or lan_core.BROADCAST)
     if not found:
-        render.warn(t("没有设备应答"))
+        render.warn("No device replied")
         render.info(
-            t("[dim]检查：和设备同一网段？路由器开了 AP 隔离？macOS 要在 系统设置 → 隐私与安全性 → 本地网络 放行终端[/dim]")
+            "[dim]Check: same subnet as the devices? AP isolation enabled on the "
+            "router? On macOS allow the terminal under System Settings → Privacy & "
+            "Security → Local Network[/dim]"
         )
         return
 
@@ -61,7 +62,8 @@ def lan_discover(
         }
     )
     app_ctx.profile.write_lan(cache)
-    # 重新扫到了就当作新证据，清掉「这台设备局域网干不了活」的标记
+    # Being found again counts as new evidence: clear the "this device cannot work over
+    # the LAN" mark
     clear_lan_failures(app_ctx.profile)
 
     rows = []
@@ -69,73 +71,65 @@ def lan_discover(
         device = by_did.get(did)
         rows.append(
             {
-                "设备": device.label if device else t("（不在设备清单里）"),
-                "房间": (device.room_name or "-") if device else "-",
+                "Device": device.label if device else "(not in the device list)",
+                "Room": (device.room_name or "-") if device else "-",
                 "IP": endpoint.ip,
                 "did": did,
-                # 广播扫描里这个数包含排队等待，不是往返延迟，别叫它「延迟」
-                "应答用时": f"{endpoint.elapsed_ms:.0f}ms",
-                "型号": device.model if device else "-",
+                # In a broadcast scan this number includes queueing time and is not
+                # round-trip latency, so do not call it "latency"
+                "Reply time": f"{endpoint.elapsed_ms:.0f}ms",
+                "Model": device.model if device else "-",
             }
         )
     render.output(rows, pick_output(app_ctx, output))
-    render.info(
-        t(
-            "[dim]{n_rows} 台应答，地址已缓存到 {lan_path}[/dim]",
-            n_rows=len(rows),
-            lan_path=app_ctx.profile.lan_path,
-        )
-    )
+    render.info(f"[dim]{len(rows)} device(s) replied; addresses cached in "
+                f"{app_ctx.profile.lan_path}[/dim]")
 
 
 @app.command("status")
 def lan_status(
     ctx: typer.Context,
-    device: Annotated[str, typer.Argument(help=t("设备名称、别名或 did"))],
+    device: Annotated[str, typer.Argument(help="Device name, alias or did")],
     output: OutputOption = None,
 ) -> None:
-    """看一台设备能不能直连、在哪个 IP、延迟多少。"""
+    """Check whether a device can be reached directly, at which IP and how fast."""
     app_ctx = _ctx(ctx)
     target = resolve(app_ctx, device)
     data: dict[str, object] = {
-        "设备": target.label,
+        "Device": target.label,
         "did": target.did,
         "connect_type": target.connect_type,
-        "支持直连": t("是") if lan_capable(target) else t("否"),
+        "LAN capable": "yes" if lan_capable(target) else "no",
     }
     if not lan_capable(target):
-        data["原因"] = (
-            t("没有局域网 token")
+        data["Reason"] = (
+            "no LAN token"
             if not target.token
-            else t("connect_type 不在 {v0} 内（走网关的设备）", v0=sorted(LAN_CAPABLE_TYPES))
+            else f"connect_type is not one of {sorted(LAN_CAPABLE_TYPES)} (the device goes through a gateway)"
         )
         render.output(data, pick_output(app_ctx, output))
         return
 
     endpoint = locate(app_ctx.profile, target)
     if endpoint is None:
-        data["可达"] = t("否")
-        data["提示"] = t("同一网段？设备在线？先跑 `mi lan discover`")
+        data["Reachable"] = "no"
+        data["Hint"] = "Same subnet? Device online? Run `mi lan discover` first"
     else:
-        data["可达"] = t("是")
+        data["Reachable"] = "yes"
         data["IP"] = endpoint.ip
-        data["延迟"] = (
+        data["Latency"] = (
             f"{endpoint.elapsed_ms:.0f}ms"
             if endpoint.is_rtt
-            else t("{elapsed_ms:.0f}ms（广播应答用时，非往返延迟）", elapsed_ms=endpoint.elapsed_ms)
+            else f"{endpoint.elapsed_ms:.0f}ms (broadcast reply time, not round-trip latency)"
         )
-        data["设备时间戳"] = endpoint.stamp
+        data["Device stamp"] = endpoint.stamp
     failure = lan_failure(app_ctx.profile, target.did)
     if failure:
         failed_at, reason = failure
-        data["上次局域网调用"] = (
-            t(
-                "失败：{reason}（{v0}）",
-                reason=reason,
-                v0=time.strftime('%m-%d %H:%M', time.localtime(failed_at)),
-            )
+        data["Last LAN call"] = (
+            f"failed: {reason} ({time.strftime('%m-%d %H:%M', time.localtime(failed_at))})"
         )
-        data["说明"] = t("auto 模式会直接走云端；`mi lan discover` 可清除这个标记")
+        data["Description"] = "auto mode goes straight to the cloud; `mi lan discover` clears this mark"
     render.output(data, pick_output(app_ctx, output))
 
 
@@ -143,34 +137,36 @@ def lan_status(
 def lan_raw(
     ctx: typer.Context,
     device: Annotated[
-        str, typer.Argument(help=t("设备名称、别名或 did（名字带空格要加引号）"))
+        str, typer.Argument(help="Device name, alias or did (quote names containing "
+                                 "spaces)")
     ],
     method: Annotated[
-        str, typer.Argument(help=t("miIO 方法名，如 miIO.info / get_properties"))
+        str, typer.Argument(help="miIO method name, e.g. miIO.info / get_properties")
     ],
     params: Annotated[
-        Optional[str], typer.Option("--params", help=t("参数，JSON 格式"))
+        Optional[str], typer.Option("--params", help="Parameters, as JSON")
     ] = None,
-    timeout: Annotated[float, typer.Option("--timeout", help=t("等待秒数"))] = 5.0,
+    timeout: Annotated[float, typer.Option("--timeout", help="Seconds to wait")] = 5.0,
     output: OutputOption = None,
 ) -> None:
-    """直接对设备发一条 miIO 请求。
+    """Send a raw miIO request straight to a device.
 
-    排查用：`miIO.info` 每台 miIO 设备都实现，能用来判断「协议通不通」和
-    「这个方法设备支不支持」是两回事。
+    For troubleshooting: every miIO device implements `miIO.info`, so it tells
+    "is the protocol working" apart from "does the device support this method".
     """
     app_ctx = _ctx(ctx)
     target = resolve(app_ctx, device)
     if not target.token:
-        raise MiCliError(t("{label} 没有局域网 token", label=target.label))
+        raise MiCliError(f"{target.label} has no LAN token")
     endpoint = locate(app_ctx.profile, target)
     if endpoint is None:
-        raise MiCliError(t("局域网上找不到 {label}，先跑 `mi lan discover`", label=target.label))
+        raise MiCliError(f"Cannot find {target.label} on the LAN; run `mi lan "
+                         "discover` first")
 
     try:
         parsed = json.loads(params) if params else []
     except json.JSONDecodeError as err:
-        raise MiCliError(t("--params 不是合法 JSON：{err}", err=err)) from err
+        raise MiCliError(f"--params is not valid JSON: {err}") from err
 
     lan = lan_core.LanDevice(target.did, target.token, endpoint)
     result = lan.call(method, parsed, timeout=timeout)
@@ -182,28 +178,23 @@ def lan_raw(
 
 @app.command("list")
 def lan_list(ctx: typer.Context, output: OutputOption = None) -> None:
-    """列出设备清单里哪些设备理论上支持局域网直连。"""
+    """List which devices in the device list should support direct LAN control."""
     app_ctx = _ctx(ctx)
     registry = load_registry(app_ctx)
     scope = app_ctx.home_filter()
     rows = [
         {
-            "设备": device.label,
-            "房间": device.room_name or "-",
-            "型号": device.model,
+            "Device": device.label,
+            "Room": device.room_name or "-",
+            "Model": device.model,
             "connect_type": device.connect_type,
-            "支持直连": t("是") if lan_capable(device) else t("否"),
-            "在线": t("是") if device.online else t("否"),
+            "LAN capable": "yes" if lan_capable(device) else "no",
+            "Online": "yes" if device.online else "no",
         }
         for device in registry.filter(**scope)
     ]
-    rows.sort(key=lambda row: (row["支持直连"] != t("是"), str(row["设备"])))
+    rows.sort(key=lambda row: (row["LAN capable"] != "yes", str(row["Device"])))
     render.output(rows, pick_output(app_ctx, output))
-    supported = sum(1 for row in rows if row["支持直连"] == t("是"))
-    render.info(
-        t(
-            "[dim]{supported} / {n_rows} 台支持局域网直连[/dim]",
-            supported=supported,
-            n_rows=len(rows),
-        )
-    )
+    supported = sum(1 for row in rows if row["LAN capable"] == "yes")
+    render.info(f"[dim]{supported} / {len(rows)} device(s) support direct LAN "
+                "control[/dim]")

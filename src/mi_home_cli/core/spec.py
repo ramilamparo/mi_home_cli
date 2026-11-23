@@ -1,7 +1,8 @@
-"""MIoT spec：设备能力描述的获取、缓存与解析。
+"""MIoT spec: fetching, caching and parsing device capability descriptions.
 
-spec 决定了每台设备有哪些属性、属性在哪个 siid.piid、取值范围和枚举是什么。
-数据来自 miot-spec.org 的公开接口，不需要登录。
+The spec determines which properties each device has, at which siid.piid they live,
+and what their value ranges and enums are. The data comes from the public API of
+miot-spec.org and needs no login.
 """
 from __future__ import annotations
 
@@ -13,27 +14,17 @@ from typing import Any
 
 import httpx
 
-from ..i18n import get_lang, t
 from ..errors import AmbiguousReference, InvalidValue, NetworkError, SpecNotFound
 from ..store import Profile
 
 INSTANCE_URL = "https://miot-spec.org/miot-spec-v2/instance"
 MULTI_LANG_URL = "https://miot-spec.org/instance/v2/multiLanguage"
 
-# spec 基本不变，缓存久一点；和上游一样 14 天
+# Specs hardly ever change, so cache them for a while; 14 days like upstream
 SPEC_TTL = 14 * 24 * 3600
-DEFAULT_LANG = "zh_cn"
+DEFAULT_LANG = "en"
 
-
-def spec_lang() -> str:
-    """spec 描述用哪种语言：跟着界面语言走。
-
-    缓存里存着 miot-spec 返回的全部语言，这里只是挑一种；`en` 里没有的条目会退回
-    instance 自带的英文描述。
-    """
-    return "en" if get_lang() == "en" else DEFAULT_LANG
-
-# spec 里的单位是英文全称，显示时换成常见符号
+# Units in the spec are full English words; show the common symbols instead
 _UNIT_SYMBOLS = {
     "percentage": "%",
     "kelvin": "K",
@@ -56,12 +47,12 @@ _UNIT_SYMBOLS = {
     "none": "",
 }
 
-_TRUE_WORDS = {"true", "on", "1", "yes", "y", "开", "是", "打开"}
-_FALSE_WORDS = {"false", "off", "0", "no", "n", "关", "否", "关闭"}
+_TRUE_WORDS = {"true", "on", "1", "yes", "y"}
+_FALSE_WORDS = {"false", "off", "0", "no", "n"}
 
 
 def urn_name(type_urn: str) -> str:
-    """从 urn 里取出可读名，如 ...:property:brightness:... → brightness。"""
+    """Take the readable name out of a urn, e.g. ...:property:brightness:... → brightness."""
     parts = type_urn.split(":")
     return parts[3] if len(parts) > 3 else type_urn
 
@@ -70,8 +61,9 @@ def urn_name(type_urn: str) -> str:
 class ValueItem:
     value: Any
     description: str
-    # spec 原文（英文）。翻译过之后 description 是中文，但用户照着 spec 文档
-    # 写英文名也应该认，所以两个都留着。
+    # The original text of the spec instance. description may come from the
+    # published "en" translation instead, but a user following the spec document
+    # should be understood too, so both are kept.
     raw: str = ""
 
     def matches(self, text: str) -> bool:
@@ -171,7 +163,7 @@ class Event:
 
 
 class DeviceSpec:
-    """一台设备（准确说是一个 urn）的能力描述。"""
+    """The capability description of one device (strictly speaking, of one urn)."""
 
     def __init__(self, urn: str, instance: dict[str, Any], translations: dict[str, str]):
         self.urn = urn
@@ -254,13 +246,14 @@ class DeviceSpec:
                     )
                 )
 
-    # ---------- 查找 ----------
+    # ---------- lookup ----------
 
     def _prefer_primary(self, candidates: list) -> list:
-        """多个同名候选时，优先设备主服务下的那个。
+        """With several candidates of the same name, prefer the one under the device's main service.
 
-        比如空气净化器的 `on` 同时存在于 air-purifier 和 screen 两个服务，
-        设备类型是 air-purifier，那 `on` 显然指主体开关而不是屏幕。
+        An air purifier's `on`, for example, exists in both the air-purifier and the screen
+        service; the device type is air-purifier, so `on` obviously means the main switch
+        and not the screen.
         """
         if len(candidates) <= 1:
             return candidates
@@ -273,10 +266,11 @@ class DeviceSpec:
         writable: bool | None = None,
         readable: bool | None = None,
     ) -> Property | None:
-        """按 spec 里的标准属性名找属性，找不到返回 None。
+        """Find a property by its standard name in the spec; returns None if not found.
 
-        属性的 urn 名（on / brightness / color-temperature …）是 MIoT 规范
-        统一的，语义命令就靠它跨型号工作。names 按优先级给，先命中先用。
+        The urn names of properties (on / brightness / color-temperature …) are unified by
+        the MIoT specification, and the semantic commands rely on them to work across
+        models. names are given in priority order; the first hit is used.
         """
         for name in names:
             candidates = [
@@ -298,13 +292,13 @@ class DeviceSpec:
         return None
 
     def find_property(self, ref: str) -> Property:
-        """支持 `2.1`、`light.brightness`、`brightness` 三种写法。"""
+        """Supports the three notations `2.1`, `light.brightness` and `brightness`."""
         ref = ref.strip()
         numeric = re.fullmatch(r"(\d+)\.(\d+)", ref)
         if numeric:
             prop = self.property_at(int(numeric[1]), int(numeric[2]))
             if prop is None:
-                raise SpecNotFound(t("这台设备没有属性 {ref}", ref=ref))
+                raise SpecNotFound(f"This device has no property {ref}")
             return prop
         lowered = ref.lower()
         stages = [
@@ -319,21 +313,16 @@ class DeviceSpec:
                 return candidates[0]
             if len(candidates) > 1:
                 raise AmbiguousReference(
-                    t("`{ref}` 匹配到多个属性：\n", ref=ref)
+                    f"`{ref}` matches several properties:\n"
                     + "\n".join(
-                        t(
-                            "  {full_name}（{ref}，{description}）",
-                            full_name=p.full_name,
-                            ref=p.ref,
-                            description=p.description,
-                        )
+                        f"  {p.full_name} ({p.ref}, {p.description})"
                         for p in candidates[:10]
                     ),
-                    hint=t("用 service.property 全名或 siid.piid"),
+                    hint="Use the full service.property name or siid.piid",
                 )
         raise SpecNotFound(
-            t("这台设备没有属性 `{ref}`", ref=ref),
-            hint=t("用 `mi spec show <设备>` 看看有哪些属性"),
+            f"This device has no property `{ref}`",
+            hint="See the available properties with `mi spec show <device>`",
         )
 
     def find_action(self, ref: str) -> Action:
@@ -344,7 +333,7 @@ class DeviceSpec:
             for action in self.actions:
                 if action.siid == siid and action.aiid == aiid:
                     return action
-            raise SpecNotFound(t("这台设备没有动作 {ref}", ref=ref))
+            raise SpecNotFound(f"This device has no action {ref}")
         lowered = ref.lower()
         stages = [
             [a for a in self.actions if a.full_name.lower() == lowered],
@@ -358,29 +347,24 @@ class DeviceSpec:
                 return candidates[0]
             if len(candidates) > 1:
                 raise AmbiguousReference(
-                    t("`{ref}` 匹配到多个动作：\n", ref=ref)
+                    f"`{ref}` matches several actions:\n"
                     + "\n".join(
-                        t(
-                            "  {full_name}（{ref}，{description}）",
-                            full_name=a.full_name,
-                            ref=a.ref,
-                            description=a.description,
-                        )
+                        f"  {a.full_name} ({a.ref}, {a.description})"
                         for a in candidates[:10]
                     ),
-                    hint=t("用 service.action 全名或 siid.aiid"),
+                    hint="Use the full service.action name or siid.aiid",
                 )
         raise SpecNotFound(
-            t("这台设备没有动作 `{ref}`", ref=ref),
-            hint=t("用 `mi action list <设备>` 看看有哪些动作"),
+            f"This device has no action `{ref}`",
+            hint="See the available actions with `mi action list <device>`",
         )
 
 
-# ---------- 取值转换 ----------
+# ---------- value conversion ----------
 
 
 def parse_value(prop: Property, raw: str) -> Any:
-    """把命令行上的字符串按 spec 转成接口要的类型。"""
+    """Convert a command-line string into the type the API wants, according to the spec."""
     text = raw.strip()
     if prop.format == "bool":
         if text.lower() in _TRUE_WORDS:
@@ -388,8 +372,8 @@ def parse_value(prop: Property, raw: str) -> Any:
         if text.lower() in _FALSE_WORDS:
             return False
         raise InvalidValue(
-            t("{full_name} 是开关量，`{raw}` 不认识", full_name=prop.full_name, raw=raw),
-            hint=t("写 on/off、true/false、1/0 都行"),
+            f"{prop.full_name} is a boolean; `{raw}` is not understood",
+            hint="Use on/off, true/false or 1/0",
         )
     if prop.value_list:
         for item in prop.value_list:
@@ -399,31 +383,19 @@ def parse_value(prop: Property, raw: str) -> Any:
             if text == str(item.value):
                 return item.value
         raise InvalidValue(
-            t("{full_name} 不接受 `{raw}`", full_name=prop.full_name, raw=raw),
-            hint=t("可选值：") + prop.range_text(),
+            f"{prop.full_name} does not accept `{raw}`",
+            hint="Allowed values: " + prop.range_text(),
         )
     if prop.format.startswith(("uint", "int")):
         try:
             value: Any = int(text, 0)
         except ValueError as err:
-            raise InvalidValue(
-                t(
-                    "{full_name} 要整数，给的是 `{raw}`",
-                    full_name=prop.full_name,
-                    raw=raw,
-                )
-            ) from err
+            raise InvalidValue(f"{prop.full_name} needs an integer, got `{raw}`") from err
     elif prop.format == "float":
         try:
             value = float(text)
         except ValueError as err:
-            raise InvalidValue(
-                t(
-                    "{full_name} 要数字，给的是 `{raw}`",
-                    full_name=prop.full_name,
-                    raw=raw,
-                )
-            ) from err
+            raise InvalidValue(f"{prop.full_name} needs a number, got `{raw}`") from err
     else:
         return text
 
@@ -431,28 +403,23 @@ def parse_value(prop: Property, raw: str) -> Any:
         low, high = prop.value_range[0], prop.value_range[1]
         if value < low or value > high:
             raise InvalidValue(
-                t(
-                    "{full_name} 的取值范围是 {low}~{high}，给的是 {value}",
-                    full_name=prop.full_name,
-                    low=low,
-                    high=high,
-                    value=value,
-                )
+                f"{prop.full_name} must be within {low}~{high}, got {value}"
             )
     return value
 
 
 def format_value(prop: Property, value: Any) -> str:
-    """把接口返回的值变成人看的样子。
+    """Turn a value returned by the API into something human-readable.
 
-    浮点数按 6 位有效数字显示：设备回的温度是 23.700001，原样甩给用户既难看
-    又像是精度错觉。用有效数字而不是固定小数位，是为了不把 0.019 mg/m³ 这种
-    小量级的值四舍五入成 0.02。
+    Floats are shown with 6 significant digits: a device reports a temperature as
+    23.700001, and dumping that on the user is ugly and looks like false precision.
+    Significant digits rather than fixed decimals are used so that small values such as
+    0.019 mg/m³ are not rounded to 0.02.
     """
     if value is None:
         return "-"
     if prop.format == "bool":
-        return t("开") if value else t("关")
+        return "on" if value else "off"
     for item in prop.value_list:
         if item.value == value:
             return f"{item.description}({value})"
@@ -470,23 +437,23 @@ def unit_symbol(unit: str | None) -> str:
     return _UNIT_SYMBOLS.get(unit.lower(), unit)
 
 
-# ---------- 获取与缓存 ----------
+# ---------- fetching and caching ----------
 
 
 class SpecStore:
-    """spec 的本地缓存。"""
+    """The local spec cache."""
 
     def __init__(
         self,
         profile: Profile,
         *,
-        lang: str | None = None,
+        lang: str = DEFAULT_LANG,
         ttl: int = SPEC_TTL,
         client: httpx.Client | None = None,
         timeout: float = 30.0,
     ) -> None:
         self.profile = profile
-        self.lang = lang or spec_lang()
+        self.lang = lang
         self.ttl = ttl
         self._client = client or httpx.Client(timeout=timeout)
         self._owns_client = client is None
@@ -510,16 +477,17 @@ class SpecStore:
         try:
             instance = self._client.get(INSTANCE_URL, params={"type": urn}).json()
         except (httpx.HTTPError, ValueError) as err:
-            raise NetworkError(t("获取 spec 失败（{urn}）：{err}", urn=urn, err=err)) from err
+            raise NetworkError(f"Failed to fetch spec ({urn}): {err}") from err
         if not isinstance(instance, dict) or "services" not in instance:
-            raise SpecNotFound(t("miot-spec.org 没有返回有效的 spec：{urn}", urn=urn))
+            raise SpecNotFound(f"miot-spec.org did not return a valid spec: {urn}")
         translations: dict[str, Any] = {}
         try:
             data = self._client.get(MULTI_LANG_URL, params={"urn": urn}).json()
             if isinstance(data, dict) and isinstance(data.get("data"), dict):
                 translations = data["data"]
         except (httpx.HTTPError, ValueError):
-            # 没有翻译不影响用，descriptions 退回英文
+            # Missing translations do no harm; descriptions fall back to the instance's
+            # own
             translations = {}
         return {
             "urn": urn,

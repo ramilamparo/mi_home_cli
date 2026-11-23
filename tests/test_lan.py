@@ -1,7 +1,9 @@
-"""miIO 局域网协议。
+"""The miIO LAN protocol.
 
-用一个自己实现的假设备（独立于被测代码的组包逻辑）跑完整链路：握手、加密、
-校验、超时。真硬件上的验证只能在同网段做，这里保证协议层是对的。
+A self-made fake device (independent of the packing logic of the code under test)
+runs the full path: handshake, encryption, checksum, timeout. Verification on real
+hardware is only possible on the same subnet; here we make sure the protocol layer
+is right.
 """
 import hashlib
 import json
@@ -29,7 +31,7 @@ def _cipher(token: bytes):
 
 
 class FakeDevice(threading.Thread):
-    """会说 miIO 的假设备，组包逻辑照协议独立写一遍。"""
+    """A fake device that speaks miIO, with the packing logic written independently from the protocol."""
 
     def __init__(self, token: str = TOKEN, *, silent: bool = False, echo_id=None):
         super().__init__(daemon=True)
@@ -65,7 +67,8 @@ class FakeDevice(threading.Thread):
             try:
                 request = self._decrypt(data)
             except AssertionError:
-                # 校验位对不上：真设备也是直接丢弃，不回任何东西
+                # checksum mismatch: a real device also just drops the packet and
+                # replies nothing
                 continue
             self.requests.append(request)
             self.sock.sendto(self._reply(request), addr)
@@ -82,7 +85,7 @@ class FakeDevice(threading.Thread):
         buffer = bytearray(data[:total])
         checksum = bytes(buffer[16:32])
         buffer[16:32] = self.token
-        assert hashlib.md5(bytes(buffer)).digest() == checksum, "客户端算的校验位不对"
+        assert hashlib.md5(bytes(buffer)).digest() == checksum, "the checksum computed by the client is wrong"
         decryptor = _cipher(self.token).decryptor()
         padded = decryptor.update(bytes(buffer[32:total])) + decryptor.finalize()
         unpadder = padding.PKCS7(algorithms.AES128.block_size).unpadder()
@@ -151,7 +154,7 @@ def test_action_roundtrip(device: FakeDevice):
 
 
 def test_request_carries_device_clock(device: FakeDevice):
-    """请求里的时间戳要按设备自己的时钟推算，不是本机时间。"""
+    """The timestamp in a request must be derived from the device's own clock, not local time."""
     lan = LanDevice(str(DID), TOKEN, device.endpoint())
     lan.get_props([{"did": str(DID), "siid": 2, "piid": 1}])
     packet = lan._build({"id": 1, "method": "x", "params": []})
@@ -160,14 +163,14 @@ def test_request_carries_device_clock(device: FakeDevice):
 
 
 def test_wrong_token_times_out_with_token_hint(device: FakeDevice):
-    """token 不对时设备根本不回包，所以表现是超时——提示里必须提到 token，
+    """With a wrong token the device does not reply at all, so it looks like a timeout — the hint must mention the token,
 
-    否则用户会一直去查网络。
+    or the user will keep investigating the network.
     """
     lan = LanDevice(str(DID), "f" * 32, device.endpoint())
     with pytest.raises(DeviceOffline) as excinfo:
         lan.get_props([{"did": str(DID), "siid": 2, "piid": 1}])
-    assert not device.requests  # 设备端确实丢弃了
+    assert not device.requests  # the device side really dropped it
     assert "token" in (excinfo.value.hint or "")
 
 
@@ -186,7 +189,7 @@ def test_timeout_reports_offline():
 
 
 def test_stale_response_id_is_ignored():
-    """上一次超时的迟到响应不能被当成这次的结果。"""
+    """A late response to the previous timed-out request must not be taken as this call's result."""
     fake = FakeDevice(echo_id=99999)
     fake.start()
     try:
@@ -212,15 +215,16 @@ def test_bad_token_length_rejected_early():
 
 
 def test_hello_did_is_four_bytes_not_eight():
-    """did 只占 4 字节，它前面的 unknown 字段回包里不一定是 0。
+    """did only takes 4 bytes; the unknown field before it is not necessarily 0 in replies.
 
-    实测有设备把 unknown 填成 16，按 8 字节读会得到 70044981670 这种
-    离谱的 did，于是永远匹配不上云端清单、无法直连。
+    One device was seen to put 16 into unknown; reading 8 bytes then gives an absurd
+    did like 70044981670, which never matches the cloud's list and makes direct control
+    impossible.
     """
     payload = (
         struct.pack(">HH", 0x2131, 32)
         + struct.pack(">I", 16)  # unknown ≠ 0
-        + struct.pack(">I", 1325504934)  # did，仍在 32 位范围内
+        + struct.pack(">I", 1325504934)  # did, still within 32 bits
         + struct.pack(">I", STAMP)
         + b"\xff" * 16
     )
@@ -229,16 +233,17 @@ def test_hello_did_is_four_bytes_not_eight():
 
 
 def test_broadcast_elapsed_is_not_labelled_as_rtt():
-    """广播扫描测到的耗时包含排队等待，不能当成往返延迟。"""
+    """The time measured by a broadcast scan includes queueing and must not be treated as round-trip latency."""
     payload = struct.pack(">HHQI16s", 0x2131, 32, DID, STAMP, b"\xff" * 16)
     assert _parse_hello(payload, 654.0, "1.2.3.4").is_rtt is False
     assert _parse_hello(payload, 5.0, "1.2.3.4", is_rtt=True).is_rtt is True
 
 
 def test_auto_channel_falls_back_when_lan_call_fails():
-    """握手成功不代表设备愿意在局域网上干活——实测有设备对 get_properties
+    """A successful handshake does not mean the device is willing to work over the LAN — some devices answer get_properties
 
-    回 user ack timeout。回落必须做在每次调用上，只在定位阶段回落不够。
+    with user ack timeout. The fallback has to happen on every call; falling back only
+    at the locating stage is not enough.
     """
     from mi_home_cli.core.channel import AutoChannel
     from mi_home_cli.errors import MiCliError as _Err
@@ -247,13 +252,13 @@ def test_auto_channel_falls_back_when_lan_call_fails():
         name = "lan"
 
         def get_props(self, params):
-            raise _Err("设备返回错误：user ack timeout")
+            raise _Err("The device returned an error: user ack timeout")
 
         def set_props(self, params):
-            raise _Err("超时")
+            raise _Err("timeout")
 
         def call_action(self, did, siid, aiid, values):
-            raise _Err("超时")
+            raise _Err("timeout")
 
     class Cloud:
         name = "cloud"
@@ -275,7 +280,7 @@ def test_auto_channel_falls_back_when_lan_call_fails():
     channel = AutoChannel(FailingLan(), Cloud(), on_note=notes.append)
     assert channel.get_props([{"siid": 2, "piid": 1}])[0]["value"] is True
     assert "user ack timeout" in notes[0]
-    # 失败过一次之后不再重试局域网，免得每条命令都白等
+    # after one failure the LAN is not retried, so not every command waits in vain
     channel.set_props([{"siid": 2, "piid": 1, "value": False}])
     channel.call_action("d", 2, 1, [])
     assert Cloud.calls == 3
@@ -283,7 +288,7 @@ def test_auto_channel_falls_back_when_lan_call_fails():
 
 
 def test_lan_failure_is_remembered_across_runs(tmp_path):
-    """一次会话内不再重试还不够——下一条命令不该再白试一遍。"""
+    """Not retrying within one session is not enough — the next command must not try in vain again either."""
     import time as _t
 
     from mi_home_cli.core.channel import (
@@ -301,7 +306,8 @@ def test_lan_failure_is_remembered_across_runs(tmp_path):
     assert reason == "user ack timeout"
     assert abs(failed_at - int(_t.time())) < 5
 
-    # 重新扫描是新证据，标记要清掉（固件升级可能补上了支持）
+    # a rescan is new evidence, so the mark must be cleared (a firmware upgrade may have
+    # added support)
     clear_lan_failures(profile)
     assert lan_failure(profile, "d1") is None
 
@@ -311,5 +317,5 @@ def test_lan_failure_expires(tmp_path, monkeypatch):
     from mi_home_cli.store import Profile
 
     profile = Profile("default", root=tmp_path)
-    profile.write_lan({"d1": {"failed_at": 1, "reason": "旧的"}})
+    profile.write_lan({"d1": {"failed_at": 1, "reason": "old"}})
     assert channel_module.lan_failure(profile, "d1") is None

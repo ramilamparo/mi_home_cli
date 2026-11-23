@@ -1,11 +1,12 @@
-"""小米账号 OAuth2 授权码流程。
+"""The Xiaomi account OAuth2 authorization code flow.
 
-流程：
-  1. 打开 account.xiaomi.com/oauth2/authorize（带 redirect_uri / client_id /
-     device_id / state），用户在浏览器里登录并授权；
-  2. 浏览器被重定向到 redirect_uri?code=...&state=...；
-  3. 拿 code 到 {api_host}/app/v2/ha/oauth/get_token 换 access_token；
-  4. 过期前用 refresh_token 走同一个接口续期。
+Flow:
+  1. open account.xiaomi.com/oauth2/authorize (with redirect_uri / client_id /
+     device_id / state); the user logs in and authorizes in the browser;
+  2. the browser is redirected to redirect_uri?code=...&state=...;
+  3. take the code to {api_host}/app/v2/ha/oauth/get_token and exchange it for an
+     access_token;
+  4. before it expires, renew through the same endpoint with the refresh_token.
 """
 from __future__ import annotations
 
@@ -19,7 +20,6 @@ from urllib.parse import urlencode
 
 import httpx
 
-from ..i18n import t
 from ..errors import CloudError, NetworkError
 from ..store import AuthData
 from . import const
@@ -53,10 +53,11 @@ def new_state() -> str:
 
 
 def state_for_device(device_id: str) -> str:
-    """按 Home Assistant 米家集成的算法生成 state。
+    """Generate state with the algorithm of the Home Assistant Xiaomi Home integration.
 
-    state 本身只用于校验回调是不是本次登录发起的，小米不会在换 token 时再要
-    它；这里保持同样的算法，纯粹是为了把「和 HA 不一致」这个变量从排查里去掉。
+    state itself is only used to check that a callback belongs to this login; Xiaomi
+    does not ask for it again at token exchange. The same algorithm is kept purely to
+    take the variable "differs from HA" out of troubleshooting.
     """
     return hashlib.sha1(f"d={device_id}".encode("utf-8")).hexdigest()
 
@@ -69,10 +70,10 @@ def build_auth_url(
     scope: list[str] | None = None,
     skip_confirm: bool = False,
 ) -> str:
-    """拼授权页 URL。
+    """Build the authorization page URL.
 
-    skip_confirm=False 表示每次都显示授权确认页，对 CLI 更安全（用户能看清
-    自己在授权什么），代价是多点一次。
+    skip_confirm=False means the consent page is shown every time, which is safer for a
+    CLI (the user can see what is being authorized) at the cost of one more click.
     """
     params: dict[str, Any] = {
         "redirect_uri": redirect_url,
@@ -88,10 +89,10 @@ def build_auth_url(
 
 
 def _unwrap_error(res_obj: dict[str, Any]) -> CloudError:
-    """把小米的嵌套错误结构翻成一句人话。
+    """Turn Xiaomi's nested error structure into one plain sentence.
 
-    形如：{"code":-6,"message":"{\\"error\\":96013,
-           \\"error_description\\":\\"invalid authorization code\\"}"}
+    Shaped like: {"code":-6,"message":"{\"error\":96013,
+                  \"error_description\":\"invalid authorization code\"}"}
     """
     code = res_obj.get("code")
     detail: dict[str, Any] = {}
@@ -111,24 +112,24 @@ def _unwrap_error(res_obj: dict[str, Any]) -> CloudError:
     inner = detail.get("error")
     hint = None
     if inner == 96013:
-        hint = t("授权码无效或已被用过，重新执行 `mi auth login`")
+        hint = "The authorization code is invalid or already used; run `mi auth login` again"
     elif inner == 96002:
         hint = (
-            t(
-                "换 token 的参数和授权时不一致（redirect_uri / client_id / device_id 三者必须完全相同），用 -v 看实际发出的请求",
-            )
+            "The token exchange parameters differ from the ones used to authorize "
+            "(redirect_uri / client_id / device_id must all be identical); use -v to "
+            "see the request actually sent"
         )
     elif code == 401 or inner == 401:
-        hint = t("凭据已失效，重新执行 `mi auth login`")
-    text = t("获取 token 失败（code={code}", code=code)
+        hint = "The credentials are no longer valid; run `mi auth login` again"
+    text = f"Failed to get a token (code={code}"
     if inner is not None:
         text += f", error={inner}"
-    text += t("）：{description}", description=description)
+    text += f"): {description}"
     return CloudError(text, code=code, description=str(description), hint=hint)
 
 
 class OAuthClient:
-    """token 的获取与刷新。"""
+    """Obtaining and refreshing tokens."""
 
     def __init__(
         self,
@@ -170,16 +171,16 @@ class OAuthClient:
                 headers={"content-type": "application/x-www-form-urlencoded"},
             )
         except httpx.HTTPError as err:
-            raise NetworkError(t("连接 {url} 失败：{err}", url=url, err=err)) from err
+            raise NetworkError(f"Connecting to {url} failed: {err}") from err
         if response.status_code == 401:
             raise CloudError(
-                t("获取 token 失败：未授权（401）"),
+                "Failed to get a token: unauthorized (401)",
                 code=401,
-                hint=t("重新执行 `mi auth login`"),
+                hint="Run `mi auth login` again",
             )
         if response.status_code != 200:
             raise CloudError(
-                t("获取 token 失败：HTTP {status_code}", status_code=response.status_code),
+                f"Failed to get a token: HTTP {response.status_code}",
                 code=response.status_code,
             )
         if self._trace:
@@ -187,7 +188,7 @@ class OAuthClient:
         try:
             res_obj = response.json()
         except ValueError as err:
-            raise CloudError(t("响应不是合法 JSON：{v0}", v0=response.text[:200])) from err
+            raise CloudError(f"The response is not valid JSON: {response.text[:200]}") from err
         if res_obj.get("code") != 0 or "result" not in res_obj:
             raise _unwrap_error(res_obj)
         result = res_obj["result"]
@@ -197,7 +198,7 @@ class OAuthClient:
             if key not in result
         ]
         if missing:
-            raise CloudError(t("响应缺少字段：{v0}", v0=', '.join(missing)))
+            raise CloudError(f"The response is missing fields: {', '.join(missing)}")
         return TokenResult(
             access_token=result["access_token"],
             refresh_token=result["refresh_token"],
@@ -225,21 +226,21 @@ class OAuthClient:
         )
 
     def user_profile(self, access_token: str) -> dict[str, Any]:
-        """账号昵称等基础信息，用于 `mi auth whoami`。"""
+        """Basic info such as the account nickname, used by `mi auth whoami`."""
         try:
             response = self._client.get(
                 const.USER_PROFILE_URL,
                 params={"clientId": const.CLIENT_ID, "token": access_token},
             )
         except httpx.HTTPError as err:
-            raise NetworkError(t("获取账号信息失败：{err}", err=err)) from err
+            raise NetworkError(f"Failed to get account info: {err}") from err
         try:
             res_obj = response.json()
         except ValueError as err:
-            raise CloudError(t("账号信息响应不是合法 JSON")) from err
+            raise CloudError("The account info response is not valid JSON") from err
         if res_obj.get("code") != 0 or "data" not in res_obj:
             raise CloudError(
-                t("获取账号信息失败：{v0}", v0=res_obj.get('description') or res_obj),
+                f"Failed to get account info: {res_obj.get('description') or res_obj}",
                 code=res_obj.get("code"),
             )
         return res_obj["data"]

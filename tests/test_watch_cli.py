@@ -1,6 +1,7 @@
-"""`mi watch` 的端到端接线（不连真 broker）。
+"""End-to-end wiring of `mi watch` (without a real broker).
 
-用假 MQTT 客户端把消息推进来，验证设备解析、spec 翻译、输出格式、退出条件。
+A fake MQTT client pushes messages in; device resolution, spec descriptions, output
+formats and exit conditions are verified.
 """
 import json
 import time
@@ -58,7 +59,7 @@ MESSAGES = [
 
 
 class FakeClient:
-    """连上就立刻把预置消息全推过来。"""
+    """Pushes all preset messages as soon as it is connected."""
 
     def __init__(self, *args, **kwargs):
         self.subscribed = []
@@ -105,18 +106,18 @@ def env(tmp_path, monkeypatch):
         {
             "uid": "1",
             "synced_at": int(time.time()),
-            "homes": [{"home_id": "h1", "home_name": "我家", "rooms": []}],
+            "homes": [{"home_id": "h1", "home_name": "My Home", "rooms": []}],
             "devices": {
                 "d1": {
-                    "did": "d1", "name": "客厅灯", "model": "x.light.v1",
+                    "did": "d1", "name": "Living Room Light", "model": "x.light.v1",
                     "urn": URN, "online": True, "home_id": "h1",
-                    "home_name": "我家", "room_id": "r1", "room_name": "客厅",
+                    "home_name": "My Home", "room_id": "r1", "room_name": "Living Room",
                 }
             },
         }
     )
     profile.spec_dir.mkdir(parents=True, exist_ok=True)
-    # 预置 spec 缓存，测试不碰网络
+    # preset the spec cache so the test never touches the network
     (profile.spec_dir / (URN.replace(":", "_") + ".json")).write_text(
         json.dumps(
             {
@@ -136,7 +137,7 @@ def env(tmp_path, monkeypatch):
 
 def test_watch_streams_json_lines(env):
     result = CliRunner().invoke(
-        app, ["-o", "json", "watch", "客厅灯", "--exit-after", "5"]
+        app, ["-o", "json", "watch", "Living Room Light", "--exit-after", "5"]
     )
     assert result.exit_code == 0, result.output
     lines = [
@@ -152,9 +153,10 @@ def test_watch_streams_json_lines(env):
         "value": True,
         "old": None,
         "did": "d1",
-        "device": "客厅灯",
+        "device": "Living Room Light",
     }
-    # 第三条是同一个属性的第二次变化，要带上一次的值
+    # the third one is the second change of the same property and must carry the
+    # previous value
     assert (lines[2]["property"], lines[2]["old"], lines[2]["value"]) == (
         "light.brightness", 60, 80,
     )
@@ -163,16 +165,16 @@ def test_watch_streams_json_lines(env):
 
 
 def test_watch_table_output_translates_names(env):
-    result = CliRunner().invoke(app, ["watch", "客厅灯", "--exit-after", "3"])
+    result = CliRunner().invoke(app, ["watch", "Living Room Light", "--exit-after", "3"])
     assert result.exit_code == 0, result.output
-    assert "Switch Status" in result.output  # spec 里的说明
-    assert "60% → 80%" in result.output  # 旧值 → 新值，带单位
-    assert "共 3 条" in result.output
+    assert "Switch Status" in result.output  # the description from the spec
+    assert "60% → 80%" in result.output  # old value → new value, with the unit
+    assert "3 message(s) in total" in result.output
 
 
 def test_watch_prop_filter(env):
     result = CliRunner().invoke(
-        app, ["-o", "plain", "watch", "客厅灯", "--prop", "brightness", "--exit-after", "2"]
+        app, ["-o", "plain", "watch", "Living Room Light", "--prop", "brightness", "--exit-after", "2"]
     )
     assert result.exit_code == 0, result.output
     assert "Brightness" in result.output
@@ -181,18 +183,18 @@ def test_watch_prop_filter(env):
 
 def test_watch_can_skip_events_and_state(env):
     result = CliRunner().invoke(
-        app, ["watch", "客厅灯", "--no-events", "--no-state", "--exit-after", "3"]
+        app, ["watch", "Living Room Light", "--no-events", "--no-state", "--exit-after", "3"]
     )
     assert result.exit_code == 0, result.output
-    # 只订属性，不订事件和上下线
+    # only properties are subscribed, not events or online state
     assert "device/d1/up/event_occured/#" not in result.output
 
 
 def test_watch_unknown_device(env):
-    """错误本身要带着退出码，main() 照着它退出。"""
+    """The error itself carries the exit code, and main() exits with it."""
     from mi_home_cli.errors import DeviceNotFound
 
-    result = CliRunner().invoke(app, ["watch", "不存在的灯", "--exit-after", "1"])
+    result = CliRunner().invoke(app, ["watch", "No Such Light", "--exit-after", "1"])
     assert isinstance(result.exception, DeviceNotFound)
     assert result.exception.exit_code == 3
 
@@ -205,17 +207,17 @@ REPEATS = [
 
 
 def test_repeated_values_are_skipped_by_default(env, monkeypatch):
-    """设备会周期性重报同一个值，真机上 26 条里一半是「1 → 1」这种噪音。"""
+    """Devices periodically re-report the same value; on real hardware half of 26 messages were "1 → 1" noise."""
     import mi_home_cli.core.mqtt as module
 
     monkeypatch.setattr(module.mqtt, "Client", _client_replaying(REPEATS))
     result = CliRunner().invoke(
-        app, ["-o", "plain", "watch", "客厅灯", "--exit-after", "2"]
+        app, ["-o", "plain", "watch", "Living Room Light", "--exit-after", "2"]
     )
     assert result.exit_code == 0, result.output
     lines = [line for line in result.output.splitlines() if "Brightness" in line]
-    assert len(lines) == 2  # 60、80，中间重复的 60 被跳过
-    assert "1 条值未变的上报已跳过" in result.output
+    assert len(lines) == 2  # 60 and 80; the repeated 60 in between is skipped
+    assert "1 more report(s) with unchanged values were skipped" in result.output
 
 
 def test_all_updates_keeps_repeats(env, monkeypatch):
@@ -224,7 +226,7 @@ def test_all_updates_keeps_repeats(env, monkeypatch):
     monkeypatch.setattr(module.mqtt, "Client", _client_replaying(REPEATS))
     result = CliRunner().invoke(
         app,
-        ["-o", "plain", "watch", "客厅灯", "--all-updates", "--exit-after", "3"],
+        ["-o", "plain", "watch", "Living Room Light", "--all-updates", "--exit-after", "3"],
     )
     assert result.exit_code == 0, result.output
     assert len([x for x in result.output.splitlines() if "Brightness" in x]) == 3
@@ -243,30 +245,31 @@ def _client_replaying(messages):
 
 
 def test_write_flags_work_after_subcommand(env):
-    """`mi set 灯 on=true --dry-run` 是任何人和任何 agent 都会自然写出的形式。
+    """`mi set light on=true --dry-run` is what anyone and any agent would naturally write.
 
-    实测中一个 agent 正是这么写的，而当时 --dry-run 只能放在子命令之前，
-    于是它直接把真实写入发了出去。
+    In testing an agent wrote exactly that, while --dry-run could only go before the
+    subcommand at the time, so it sent the real write straight out.
     """
     result = CliRunner().invoke(
-        app, ["set", "客厅灯", "brightness=60", "--dry-run"]
+        app, ["set", "Living Room Light", "brightness=60", "--dry-run"]
     )
     assert result.exit_code == 0, result.output
     assert "dry-run" in result.output
 
-    # 语义命令、on/off 上同样要有
+    # the semantic commands and on/off must have it too
     assert "--dry-run" in CliRunner().invoke(app, ["light", "--help"]).output
     assert "--verify" in CliRunner().invoke(app, ["on", "--help"]).output
     assert "--dry-run" in CliRunner().invoke(app, ["action", "--help"]).output
 
 
 def test_on_off_toggle_support_dry_run(env):
-    """一个 agent 想先预演 `mi off 台灯` 却发现只有 mi set 支持 --dry-run。
+    """An agent wanted to rehearse `mi off lamp` first and found that only mi set supported --dry-run.
 
-    写操作的开关要一致，否则 agent 会退而直接下发真实指令。
+    The write switches must be consistent, or an agent falls back to sending the real
+    command directly.
     """
     for command in ("on", "off", "toggle"):
-        result = CliRunner().invoke(app, [command, "客厅灯", "--dry-run"])
+        result = CliRunner().invoke(app, [command, "Living Room Light", "--dry-run"])
         assert result.exit_code == 0, result.output
         assert "dry-run" in result.output
         assert "light.on" in result.output

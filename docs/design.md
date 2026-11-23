@@ -1,159 +1,163 @@
-# 米家控制 CLI — 实现方案设计
+# Mi Home control CLI — implementation design
 
-[English](design.en.md) · **简体中文**
-
-> 参考对象：[XiaoMi/ha_xiaomi_home](https://github.com/XiaoMi/ha_xiaomi_home)（Home Assistant 米家集成）
-> 本文只描述**如何实现**；命令清单见 [cli-spec.md](./cli-spec.md)。
+> Reference: [XiaoMi/ha_xiaomi_home](https://github.com/XiaoMi/ha_xiaomi_home) (the Home Assistant Xiaomi Home integration)
+> This document only describes **how it is implemented**; for the command list see [cli-spec.md](./cli-spec.md).
 
 ---
 
-## 0. 前置：许可证边界（必须先明确）
+## 0. Prerequisite: the license boundary (must be clear first)
 
-`ha_xiaomi_home` 的 License 头明确写着：授权仅限「为在 Home Assistant 中非商业使用」而复制、修改、分发，并且**不授权用于开发 APP、Web 服务及其他形式的软件**。
+The license header of `ha_xiaomi_home` states explicitly that the grant only covers copying, modifying and distributing "for non-commercial use in Home Assistant", and that it **does not grant the right to develop apps, web services or other forms of software**.
 
-因此本项目的约束是：
+The constraints for this project are therefore:
 
-- **不复制、不移植** `ha_xiaomi_home` 的源码、`specs/` 资源文件、翻译资源。
-- 只把它当作**协议与接口行为的参考资料**（哪个 URL、哪些字段、哪种时序），自行独立实现。
-- 局域网 miIO 协议部分若需要现成实现，使用 MIT 协议的 [`python-miio`](https://github.com/rytilahti/python-miio) 作为依赖，而不是抄上游代码。
-- README 中声明本项目与小米官方无关，且账号数据仅保存在本地。
+- **Do not copy or port** the source code, the `specs/` resource files or the translation resources of `ha_xiaomi_home`.
+- Treat it only as **reference material for protocol and API behaviour** (which URL, which fields, which sequence) and implement everything independently.
+- If a ready-made implementation of the LAN miIO protocol is needed, depend on the MIT-licensed [`python-miio`](https://github.com/rytilahti/python-miio) rather than copying upstream code.
+- State in the README that this project is not affiliated with Xiaomi and that account data is only stored locally.
 
 ---
 
-## 1. 上游是怎么跑通的（读码结论）
+## 1. How upstream makes it work (findings from reading the code)
 
-从 `custom_components/xiaomi_home/miot/` 读出的关键事实，是本 CLI 的实现依据：
+The key facts read out of `custom_components/xiaomi_home/miot/`, which this CLI's implementation is based on:
 
-### 1.1 认证：OAuth2 授权码模式
+### 1.1 Authentication: OAuth2 authorization code flow
 
-| 项 | 值 |
+| Item | Value |
 | --- | --- |
-| 授权页 | `https://account.xiaomi.com/oauth2/authorize` |
-| `client_id` | `2882303761520251711`（HA 集成公开使用的 ID） |
-| 换 token | `GET https://{host}/app/v2/ha/oauth/get_token?data={json}` |
-| API host | `ha.api.io.mi.com`（`cn`）/ `{region}.ha.api.io.mi.com`（其他区） |
-| 参数 | `redirect_uri` / `client_id` / `response_type=code` / `device_id` / `state` / `skip_confirm` |
-| `device_id` | 上游用 `ha.{uuid}`；本项目用 `cli.{uuid}` |
-| 返回 | `access_token` / `refresh_token` / `expires_in` |
+| Authorization page | `https://account.xiaomi.com/oauth2/authorize` |
+| `client_id` | `2882303761520251711` (the ID the HA integration uses publicly) |
+| Token exchange | `GET https://{host}/app/v2/ha/oauth/get_token?data={json}` |
+| API host | `ha.api.io.mi.com` (`cn`) / `{region}.ha.api.io.mi.com` (other regions) |
+| Parameters | `redirect_uri` / `client_id` / `response_type=code` / `device_id` / `state` / `skip_confirm` |
+| `device_id` | upstream uses `ha.{uuid}`; this project uses `cli.{uuid}` |
+| Returns | `access_token` / `refresh_token` / `expires_in` |
 
-无 client_secret，刷新用 `refresh_token` 走同一个 `get_token` 接口。
+There is no client_secret; refreshing uses the `refresh_token` against the same `get_token` endpoint.
 
-### 1.2 云端 HTTP API
+### 1.2 Cloud HTTP API
 
-请求头：`Authorization: Bearer{access_token}`（**注意上游确实没有空格**）、`X-Client-BizId: haapi`、`X-Client-AppId: {client_id}`、`Content-Type: application/json`。响应统一是 `{"code":0,"result":...}`。
+Request headers: `Authorization: Bearer{access_token}` (**note that upstream really has no space there**), `X-Client-BizId: haapi`, `X-Client-AppId: {client_id}`, `Content-Type: application/json`. Responses are uniformly `{"code":0,"result":...}`.
 
-| 用途 | 接口 |
+| Purpose | Endpoint |
 | --- | --- |
-| 家庭/房间/设备归属 | `POST /app/v2/homeroom/gethome`（分页） |
-| 设备详情 | `POST /app/v2/home/device_list_page`（`limit:200`，`start_did` 翻页） |
-| 读属性 | `POST /app/v2/miotspec/prop/get`，body `{datasource:1, params:[{did,siid,piid}]}` |
-| 写属性 | `POST /app/v2/miotspec/prop/set`，body `{params:[{did,siid,piid,value}]}` |
-| 调用 action | `POST /app/v2/miotspec/action`，body `{params:{did,siid,aiid,in:[值...]}}` |
-| 用户信息 | `GET https://open.account.xiaomi.com/user/profile` |
-| 中枢证书 | `POST /app/v2/ha/oauth/get_central_crt` |
+| Homes / rooms / device membership | `POST /app/v2/homeroom/gethome` (paginated) |
+| Device details | `POST /app/v2/home/device_list_page` (`limit:200`, paged by `start_did`) |
+| Read properties | `POST /app/v2/miotspec/prop/get`, body `{datasource:1, params:[{did,siid,piid}]}` |
+| Write properties | `POST /app/v2/miotspec/prop/set`, body `{params:[{did,siid,piid,value}]}` |
+| Call an action | `POST /app/v2/miotspec/action`, body `{params:{did,siid,aiid,in:[values...]}}` |
+| User info | `GET https://open.account.xiaomi.com/user/profile` |
+| Central hub certificate | `POST /app/v2/ha/oauth/get_central_crt` |
 
-设备条目里可用的字段：`did`、`name`、`model`、`spec_type`(urn)、`isOnline`、`token`（局域网密钥）、`local_ip`、`pid`(connect_type)、`rssi`、`parent_id`、`extra.fw_version`。
+Fields available in a device entry: `did`, `name`, `model`, `spec_type` (urn), `isOnline`, `token` (the LAN key), `local_ip`, `pid` (connect_type), `rssi`, `parent_id`, `extra.fw_version`.
 
-工程要点：上游把 `prop/get` 做了 **0.2s 聚合 + 单请求最多 150 条**；`did` 形如 `600xxxxxx.s2` 的是子设备。
+Engineering notes: upstream gives `prop/get` **0.2s aggregation + at most 150 entries per request**; a `did` shaped like `600xxxxxx.s2` is a sub-device.
 
-### 1.3 spec（设备能力描述）
+### 1.3 spec (device capability description)
 
-- 实例：`https://miot-spec.org/miot-spec-v2/instance?type={urn}`
-- 多语言：`https://miot-spec.org/instance/v2/multiLanguage`
-- 标准库模板：`https://miot-spec.org/miot-spec-v2/template/list/...`
+- Instance: `https://miot-spec.org/miot-spec-v2/instance?type={urn}`
+- Multi-language: `https://miot-spec.org/instance/v2/multiLanguage`
+- Standard library templates: `https://miot-spec.org/miot-spec-v2/template/list/...`
 
-这些是**公开接口，不需要 token**，可以放心直接用。spec 决定了 `siid/piid/aiid`、`format`、`access`（read/write/notify）、`value-range`、`value-list`（枚举）、单位。
+These are **public endpoints that need no token**, so they can be used directly without worry. The spec determines `siid/piid/aiid`, `format`, `access` (read/write/notify), `value-range`, `value-list` (enums) and units.
 
-### 1.4 实时推送
+### 1.4 Real-time push
 
-> TLS 的根证书按「`MI_CA_BUNDLE` → 系统默认（含 `SSL_CERT_FILE`）→ certifi 兜底」
-> 的顺序取。只用 certifi 会把配了企业 CA 的用户挡在门外；只用系统默认则在
-> macOS 的某些 Python 上一张根证书都没有。另外代理的 fake-IP（`198.18.x.x`）
-> 会做中间人，证书校验必然失败，`mi doctor` 会把这种情况点出来。
+> The TLS root certificates are taken in the order "`MI_CA_BUNDLE` → system default
+> (including `SSL_CERT_FILE`) → certifi as a fallback". Using only certifi would lock
+> out users who have configured a corporate CA; using only the system default leaves
+> some Pythons on macOS without a single root certificate. In addition, a proxy's
+> fake-IP (`198.18.x.x`) acts as a man in the middle, so certificate verification is
+> bound to fail; `mi doctor` points this situation out.
 
 
-云端 MQTT：`{区域}-ha.mqtt.io.mi.com:8883`，TLS + MQTT v5，
-**用户名是 OAuth 的 client_id、密码是 access_token**，
-client_id 就是 OAuth 用的那个 `ha.{32 位 hex}`。订阅：
+Cloud MQTT: `{region}-ha.mqtt.io.mi.com:8883`, TLS + MQTT v5,
+**the username is the OAuth client_id and the password is the access_token**,
+and the client_id is the same `ha.{32 hex chars}` used for OAuth. Subscriptions:
 
-- 属性变化：`device/{did}/up/properties_changed/{siid}/{piid}`（或 `#`）
-- 事件：`device/{did}/up/event_occured/{siid}/{eiid}`（上游此处拼写就是 `occured`）
-- 在线状态：`device/{did}/state/#`
+- Property changes: `device/{did}/up/properties_changed/{siid}/{piid}` (or `#`)
+- Events: `device/{did}/up/event_occured/{siid}/{eiid}` (upstream really spells it `occured` here)
+- Online state: `device/{did}/state/#`
 
-### 1.5 局域网控制
+### 1.5 LAN control
 
-miIO 协议：UDP `54321`，包头 `0x2131`，密钥 = `md5(token)`，IV = `md5(md5(token)+token)`，AES-128-CBC + PKCS7，`[16:32]` 位是含 token 的 MD5 校验位。载荷是 JSON-RPC：`get_properties` / `set_properties` / `action`，参数与云端一致。
+The miIO protocol: UDP `54321`, packet header `0x2131`, key = `md5(token)`, IV = `md5(md5(token)+token)`, AES-128-CBC + PKCS7, bytes `[16:32]` are an MD5 checksum that includes the token. The payload is JSON-RPC: `get_properties` / `set_properties` / `action`, with the same parameters as the cloud.
 
-限制（上游文档明确写了）：只能控制**与本机同网段、直接联网的 WiFi/有线设备**，蓝牙 Mesh、ZigBee 等经网关接入的设备走不了局域网。中枢网关控制（mDNS 发现 + 证书）仅 `cn` 区支持，复杂度高。
-
----
-
-## 2. 技术选型
-
-**推荐：Python 3.11+**
-
-- 与参考实现同语言，协议对照成本最低；`python-miio`（局域网）、`paho-mqtt`、`httpx`、`cryptography` 生态齐全。
-- CLI 框架 `typer`（基于 click，自带补全生成），输出用 `rich`（表格/颜色/进度）。
-- 依赖与打包统一用 `uv`：`uv sync` 建环境、`uv lock` 锁版本（`uv.lock` 入库），
-  `uv run mi ...` 开发期调用，`uv tool install` 装成全局命令；入口命令 `mi`。
-
-备选：Go（单二进制、启动快、分发省心，但 miIO 与 spec 解析要全部自己写）。若目标是「给别人分发的工具」而非「自己用的脚本」，可以选 Go；本设计按 Python 展开，分层设计对两者通用。
+Limitations (stated explicitly in the upstream docs): it can only control **WiFi/wired devices that are on the same subnet as this machine and connected to the network directly**; devices that join through a gateway, such as Bluetooth Mesh and ZigBee, cannot be reached over the LAN. Central hub gateway control (mDNS discovery + certificates) is only supported in the `cn` region and is highly complex.
 
 ---
 
-## 3. 架构分层
+## 2. Technology choices
+
+**Recommended: Python 3.11+**
+
+- Same language as the reference implementation, so comparing protocols costs the least; the ecosystem has `python-miio` (LAN), `paho-mqtt`, `httpx` and `cryptography`.
+- CLI framework `typer` (built on click, generates completions itself); output uses `rich` (tables / colours / progress).
+- Dependencies and packaging all go through `uv`: `uv sync` creates the environment, `uv lock` pins versions (`uv.lock` is committed),
+  `uv run mi ...` for invoking during development, `uv tool install` to install it as a global command; the entry point command is `mi`.
+
+Alternative: Go (single binary, fast startup, easy distribution, but miIO and spec parsing would all have to be written by hand). If the goal were "a tool distributed to others" rather than "a script for my own use", Go would be an option; this design is laid out for Python, and the layering applies to both.
+
+---
+
+## 3. Architecture layers
 
 ```
 mi_home_cli/
-├── cli/                     # 命令层：只做参数解析 + 调用 core + 渲染
-│   ├── main.py              # 根命令、全局参数、异常→退出码
+├── cli/                     # command layer: only argument parsing + calling core + rendering
+│   ├── main.py              # root command, global options, exceptions → exit codes
 │   ├── auth.py device.py home.py spec.py prop.py action.py
 │   ├── watch.py lan.py scene.py config.py doctor.py repl.py
-│   └── render.py            # table / json / yaml / plain 四种输出
+│   └── render.py            # the four outputs: table / json / yaml / plain
 ├── core/
-│   ├── auth.py              # OAuth2：授权 URL、本地回环回调、token 刷新
-│   ├── cloud.py             # HTTP API 封装（含 get 聚合、分页、重试）
-│   ├── mqtt.py              # 云端 MQTT 订阅（watch 用）
-│   ├── lan.py               # miIO UDP 直连（可选依赖 python-miio）
-│   ├── spec.py              # spec 拉取/缓存/索引/值转换
-│   ├── registry.py          # 设备清单缓存 + 名称/别名解析
-│   ├── channel.py           # 通道路由：auto / cloud / lan
-│   └── errors.py            # 错误码 → 人话 + 退出码
-├── store.py                 # ~/.config/mi-home-cli 的读写（profile 隔离）
-└── tests/                   # 全部离线，用 httpx.MockTransport 回放
+│   ├── auth.py              # OAuth2: authorization URL, local loopback callback, token refresh
+│   ├── cloud.py             # HTTP API wrapper (get aggregation, pagination, retries)
+│   ├── mqtt.py              # cloud MQTT subscription (used by watch)
+│   ├── lan.py               # direct miIO over UDP (optional dependency python-miio)
+│   ├── spec.py              # spec fetching / caching / indexing / value conversion
+│   ├── registry.py          # device list cache + name / alias resolution
+│   ├── channel.py           # channel routing: auto / cloud / lan
+│   └── errors.py            # error codes → plain language + exit codes
+├── store.py                 # reads and writes ~/.config/mi-home-cli (isolated per profile)
+└── tests/                   # fully offline, replayed with httpx.MockTransport
 ```
 
-**关键抽象 `Channel`**：`get_props / set_props / call_action` 三个方法，
-`CloudChannel` 与 `LanChannel` 都实现它，`AutoChannel` 按「本机有 token +
-设备在同网段 + 局域网可达」优先走 LAN、失败回落云端。CLI 层完全不感知走的哪条路。
+**The key abstraction `Channel`**: three methods, `get_props / set_props / call_action`.
+`CloudChannel` and `LanChannel` both implement it, and `AutoChannel` prefers the LAN
+when "this machine has the token + the device is on the same subnet + the LAN is
+reachable", falling back to the cloud on failure. The CLI layer is completely unaware
+of which path is taken.
 
-**默认是 `cloud`**：局域网首次命中要付探活（unicast hello）加一次可能失败的
-调用，这份等待不该由默认承担；想要低延迟的人显式 `--channel lan`，或
-`mi config set channel auto` 设为默认。
+**The default is `cloud`**: the first LAN hit pays for a liveness probe (unicast hello)
+plus a call that may fail, and that wait should not be borne by the default; those who
+want low latency pass `--channel lan` explicitly, or make it the default with
+`mi config set channel auto`.
 
-### 3.1 本地存储
+### 3.1 Local storage
 
 ```
 ~/.config/mi-home-cli/
-├── config.toml                 # 默认 profile、region、输出格式、超时、lan 开关
+├── config.toml                 # default profile, region, output format, timeout, lan switch
 └── profiles/<name>/
-    ├── auth.json               # access/refresh token、uid、过期时间   (chmod 600)
-    ├── devices.json            # 设备清单缓存（含局域网 token）        (chmod 600)
-    ├── aliases.json            # 用户自定义短名
-    └── spec/<urn>.json         # spec 缓存（默认 14 天，与上游一致）
+    ├── auth.json               # access/refresh token, uid, expiry time   (chmod 600)
+    ├── devices.json            # device list cache (includes LAN tokens)   (chmod 600)
+    ├── aliases.json            # user-defined short names
+    └── spec/<urn>.json         # spec cache (14 days by default, same as upstream)
 ```
 
-- 含密文件一律 `0600`，目录 `0700`；启动时校验权限，不对就警告。
-- 局域网 token 默认在任何输出里打码，`--show-secrets` 才明文。
-- 局域网地址缓存在 `lan.json`（did → IP + 发现时间），命中时先发一个 unicast
-  hello 确认（几十毫秒），失败才重新广播扫描。
-- 支持 `MI_HOME_CONFIG_DIR` 环境变量覆盖；支持 `--profile` 管理多账号/多区域。
+- Files containing secrets are always `0600` and directories `0700`; permissions are checked at startup and a warning is issued if they are wrong.
+- LAN tokens are masked by default in all output; only `--show-secrets` shows them in plain text.
+- LAN addresses are cached in `lan.json` (did → IP + discovery time). On a hit a
+  unicast hello is sent first to confirm (tens of milliseconds); only on failure is a
+  broadcast scan repeated.
+- The `MI_HOME_CONFIG_DIR` environment variable overrides the location; `--profile` manages multiple accounts / regions.
 
-### 3.2 登录流程（CLI 版本的难点）
+### 3.2 Login flow (the hard part of the CLI version)
 
-**redirect_uri 是被服务端白名单锁死的**，这是整个 CLI 最硬的约束。
+**The redirect_uri is locked down by a server-side allowlist**, and this is the hardest constraint of the whole CLI.
 
-上游 `miot/const.py` 里写着：
+Upstream `miot/const.py` says:
 
 ```python
 # Registered in Xiaomi OAuth 2.0 Service
@@ -161,14 +165,14 @@ mi_home_cli/
 OAUTH_REDIRECT_URL: str = 'http://homeassistant.local:8123'
 ```
 
-HA 再拼上自己的 webhook 路径，最终是
-`http://homeassistant.local:8123/api/webhook/{virtual_did}`。
+HA then appends its own webhook path, ending up with
+`http://homeassistant.local:8123/api/webhook/{virtual_did}`.
 
-实测授权接口对各种 redirect_uri 的反应：
+How the authorization endpoint reacted to various redirect_uri values when tested:
 
-| redirect_uri | 结果 |
+| redirect_uri | Result |
 | --- | --- |
-| `http://homeassistant.local:8123/api/webhook/123456` | 302 → 登录页 ✅ |
+| `http://homeassistant.local:8123/api/webhook/123456` | 302 → login page ✅ |
 | `http://homeassistant.local:8123/mi-home-cli/callback` | 302 ✅ |
 | `http://homeassistant.local:8123/x?foo=bar` | 302 ✅ |
 | `https://homeassistant.local:8123/x` | 302 ✅ |
@@ -176,229 +180,288 @@ HA 再拼上自己的 webhook 路径，最终是
 | `http://localhost:8123/x` | `invalid redirect uri` ❌ |
 | `http://127.0.0.1:9527` | `invalid redirect uri` ❌ |
 
-**授权这一步的结论：host 必须是 `homeassistant.local:8123`；scheme 与 path、
-query 不校验。**
+**Conclusion for the authorization step: the host must be `homeassistant.local:8123`;
+the scheme, path and query are not checked.**
 
-但**换 token 那一步还会再比对一次**。用自定义路径
-（`/mi-home-cli/callback`）和自定义 `device_id`（`cli.xxx`）拿到的真实授权码，
-换 token 时返回 `96002 invalid request`；用假授权码测同样的参数却是
-`96013 invalid authorization code`——说明服务端先查授权码，查到之后才校验
-绑定信息，所以 96002 是「码本身有效、但参数不符合预期」。
+But **the token exchange step compares once more**. With a real authorization code
+obtained using a custom path (`/mi-home-cli/callback`) and a custom `device_id`
+(`cli.xxx`), the token exchange returns `96002 invalid request`; testing the same
+parameters with a fake authorization code gives `96013 invalid authorization code`
+instead — which shows that the server looks up the authorization code first and only
+checks the bound information after finding it, so 96002 means "the code itself is
+valid, but the parameters are not what was expected".
 
-因此身份三件套完全照 Home Assistant 的形态生成：
+So the identity triple is generated exactly in Home Assistant's shape:
 
-| 项 | 值 |
+| Item | Value |
 | --- | --- |
-| `redirect_uri` | `http://homeassistant.local:8123/api/webhook/{webhook_id}`，`webhook_id` = 随机 64 位整数 |
-| `device_id` | `ha.` + 32 位 hex（`sha256(install_id.webhook_id.region)[:32]`） |
-| `state` | `sha1("d=" + device_id)`，与上游同算法 |
+| `redirect_uri` | `http://homeassistant.local:8123/api/webhook/{webhook_id}`, `webhook_id` = a random 64-bit integer |
+| `device_id` | `ha.` + 32 hex chars (`sha256(install_id.webhook_id.region)[:32]`) |
+| `state` | `sha1("d=" + device_id)`, the same algorithm as upstream |
 
-这三个值按 profile 持久化在 `identity.json` 里；授权与换 token 必须用同一套，
-所以每次 `mi auth login` 会把它们连同 `state` 写进 `pending.json`，
-换 token 万一失败可以用 `mi auth exchange <code>` 拿同一个授权码重试，
-不必再走一遍浏览器。
+These three values are persisted per profile in `identity.json`; authorization and
+token exchange must use the same set, so every `mi auth login` writes them together
+with `state` into `pending.json`. Should the token exchange fail, it can be retried
+with the same authorization code via `mi auth exchange <code>`, without going through
+the browser again.
 
-于是要自动收到 code，得同时满足两件事：浏览器把 `homeassistant.local` 解析到
-跑 CLI 的机器，且该机器的 8123 端口由我们监听。实现按下面的顺序尽力而为，
-每一步失败都不阻断流程：
+To receive the code automatically, two things must therefore hold at once: the browser
+resolves `homeassistant.local` to the machine running the CLI, and port 8123 on that
+machine is listened on by us. The implementation makes a best effort in the following
+order, and no failed step blocks the flow:
 
-1. 端口 8123 能 bind → 起本地 HTTP 服务（任意路径都收，只认 `code`/`state`）。
-   本机在跑 Home Assistant 时端口会被占，直接跳到粘贴方式。
-2. `homeassistant.local` 已经解析到本机（hosts 或局域网里的 mDNS）→ 直接可用。
-3. 否则装了 `zeroconf` 就自己广播一条 mDNS 记录，把 `homeassistant.local`
-   指向本机 IP。局域网里有真 HA 时会撞名，撞了就放弃。
-4. **粘贴兜底，永远可用**：浏览器跳到打不开的地址后，地址栏里仍然带着
-   `?code=...&state=...`，让用户整段粘回终端。本地服务和粘贴同时等待，
-   谁先到用谁；`--manual` 只走粘贴。
+1. Port 8123 can be bound → start a local HTTP server (accepts any path, only cares
+   about `code`/`state`). If Home Assistant is running on this machine the port is
+   taken, and we jump straight to pasting.
+2. `homeassistant.local` already resolves to this machine (hosts file or mDNS on the
+   LAN) → usable as is.
+3. Otherwise, if `zeroconf` is installed, advertise an mDNS record ourselves pointing
+   `homeassistant.local` at this machine's IP. If there is a real HA on the LAN the
+   name collides; on a collision we give up.
+4. **The paste fallback, always available**: after the browser is redirected to an
+   address that will not load, the address bar still contains
+   `?code=...&state=...`; the user pastes the whole thing back into the terminal. The
+   local server and the paste prompt wait at the same time, and whichever arrives
+   first is used; `--manual` only uses pasting.
 
-安全上：本地回调的 `state` 必须完全匹配才接受（不匹配就是别人往这个端口打的
-请求）；粘贴内容缺 `state` 时给出警告。`state` 由 `device_id` 推导而来
-（与上游同算法），不是每次随机——回调只在本机短暂监听，这点取舍换来的是
-和上游完全一致的参数，少一个排查变量。
+On security: the `state` of a local callback must match exactly to be accepted (a
+mismatch means someone else sent a request to this port); a warning is issued when
+pasted content lacks `state`. `state` is derived from `device_id` (same algorithm as
+upstream) rather than being random each time — the callback only listens briefly on
+this machine, and what this trade-off buys is parameters fully identical to upstream,
+one variable fewer to troubleshoot.
 
-token 到期前（用掉 70% 有效期）自动续期；续期失败则提示重新 `mi auth login`，
-退出码 `10`。
+The token is renewed automatically before it expires (once 70% of its lifetime is
+used up); if renewal fails, the user is told to run `mi auth login` again, with exit
+code `10`.
 
-### 3.3 扫码登录（`--scan`）
+### 3.3 QR-code login (`--scan`)
 
-浏览器登录的痛点全在 `redirect_uri` 白名单上（见 3.2）。扫码登录换个思路：
-**授权码照样是浏览器登录页产出的那个 `code`，只是把「人在浏览器里输账号密码」
-换成「人用小米 App 扫码确认」**。后半段（`code` → `get_token`）与浏览器登录
-共用同一套代码和同一套身份三件套，扫码只是前半段「拿 code」的另一种方式。
+All the pain of browser login lies in the `redirect_uri` allowlist (see 3.2). QR-code
+login takes a different approach: **the authorization code is still the very `code`
+that the browser login page produces; only "a person typing account and password into
+a browser" is replaced by "a person scanning and confirming with a Xiaomi app"**. The
+second half (`code` → `get_token`) shares the same code and the same identity triple
+with browser login; scanning is merely another way of doing the first half, "getting
+the code".
 
-**明确不引入无头浏览器**，纯 API 调用复刻登录页的跳转流程。解析授权页跳转的
-结论如下（`core/qrlogin.py`）：
+**A headless browser is deliberately not introduced**; the login page's redirect flow
+is reproduced with plain API calls. The findings from analysing the authorization
+page's redirects are as follows (`core/qrlogin.py`):
 
-1. `GET oauth2/authorize`（`skip_confirm=true`）→ `302` 跳到
-   `pass/serviceLogin?...&sid=oauth2.0&callback=...&_ssign=...`。serviceLogin 的
-   地址不写死，跟着这个 302 走，少一个会变的常量。
-2. `GET serviceLogin?_json=true` → 返回 JSON，取出登录参数 `_sign` / `sid` /
-   `qs` / `callback` / `serviceParam`。未登录时响应里带 `code=70016 登录验证失败`，
-   这是**正常状态**（要的是里面的参数，不是登录结果）；同时服务端种下 `deviceId`
-   等 cookie，后续每一步都要带着。
-3. `GET longPolling/loginUrl`（带上一步的参数）→ 返回：
-   - `loginUrl`：编码进二维码给用户扫的地址；
-   - `lp`：长轮询地址；
-   - `qr`：服务端渲染的二维码图片地址（没装 `segno` 时的兜底）；
-   - `timeout`：二维码有效期（约 300 秒）。
-4. 终端里把 `loginUrl` 画成二维码。渲染用「上半块 `▀` + 前景色画上模块、背景色
-   画下模块」：背景色会连同行间距留白一起填掉，避免半块在有 line-height 的终端
-   里裂成横条；前景/背景显式黑白，深浅色主题都不反色。二维码编码用 `segno`（纯
-   Python、零依赖，直接依赖，装好即用）。终端字符格宽高比因终端/字体而异，纯文本
-   二维码不可能在所有终端都正方，所以**同时始终打印服务端的 `qr` 图片地址**（一张
-   PNG，浏览器打开即见）和 `loginUrl` 本身作为兜底——终端里扫不出时不至于卡死。
-5. 长轮询 `lp`：它会一直挂起直到手机确认。单次请求挂到上限（30s）就重发，总时
-   限由 `--wait` 和二维码有效期里较小的那个决定。手机已扫未确认时服务端可能先返
-   回一个没有 `location` 的中间响应，这时接着等。
-6. 确认后 `lp` 返回一个 `location`。**携带一路攒下的 cookie** 跟随它的跳转链
-   （`sts` → `oauth2/authorize` → `redirect_uri`）。走到 host 为
-   `homeassistant.local` 那一跳时——那台机器多半不可达——**只解析不真正请求**，
-   直接从 URL 的 query 里取出 `code` 和 `state`（复用粘贴那条路的解析，含 `state`
-   校验）。
-7. `code` 交给 `OAuthClient.exchange_code`，与浏览器登录汇合。
+1. `GET oauth2/authorize` (`skip_confirm=true`) → `302` to
+   `pass/serviceLogin?...&sid=oauth2.0&callback=...&_ssign=...`. The serviceLogin
+   address is not hard-coded; we follow this 302, one changeable constant fewer.
+2. `GET serviceLogin?_json=true` → returns JSON, from which the login parameters
+   `_sign` / `sid` / `qs` / `callback` / `serviceParam` are taken. When not logged in
+   the response carries `code=70016` ("login verification failed"), which
+   is the **normal state** (what we want are the parameters inside, not a login
+   result); at the same time the server sets cookies such as `deviceId`, which must
+   be carried along in every later step.
+3. `GET longPolling/loginUrl` (with the parameters from the previous step) → returns:
+   - `loginUrl`: the address encoded into the QR code for the user to scan;
+   - `lp`: the long-polling address;
+   - `qr`: the address of a server-rendered QR code image (the fallback when `segno`
+     is not installed);
+   - `timeout`: the validity of the QR code (about 300 seconds).
+4. `loginUrl` is drawn as a QR code in the terminal. Rendering uses "the upper half
+   block `▀` + the foreground colour for the upper module and the background colour
+   for the lower module": the background colour also fills the line-spacing gap,
+   which keeps half blocks from splitting into stripes in terminals with a
+   line-height; foreground/background are explicitly black and white, so neither dark
+   nor light themes invert it. The QR code is encoded with `segno` (pure Python, zero
+   dependencies, a direct dependency, works once installed). The aspect ratio of a
+   terminal character cell varies with terminal and font, so a plain-text QR code
+   cannot be square in every terminal; therefore **the server's `qr` image address is
+   always printed as well** (a PNG, visible by opening it in a browser), plus
+   `loginUrl` itself as a fallback — so that failing to scan in the terminal never
+   leaves you stuck.
+5. Long-poll `lp`: it hangs until the phone confirms. A single request is re-sent once
+   it has hung up to the limit (30s); the overall time limit is the smaller of
+   `--wait` and the QR code's validity. When the phone has scanned but not confirmed
+   yet, the server may first return an intermediate response without `location`; in
+   that case we keep waiting.
+6. After confirmation `lp` returns a `location`. Its redirect chain
+   (`sts` → `oauth2/authorize` → `redirect_uri`) is followed **carrying the cookies
+   collected along the way**. On reaching the hop whose host is
+   `homeassistant.local` — a machine that is most likely unreachable — the URL is
+   **only parsed, not actually requested**, and `code` and `state` are taken straight
+   from its query (reusing the parsing of the paste path, including the `state`
+   check).
+7. `code` is handed to `OAuthClient.exchange_code`, joining the browser login path.
 
-区域（`--region`）只影响后面换 token 的 API host，账号登录页本身与区域无关，
-`longPolling/loginUrl` 会按出口自动选接入点（响应里的 `dc`）。
+The region (`--region`) only affects the API host used later for the token exchange;
+the account login page itself is independent of the region, and
+`longPolling/loginUrl` picks an access point automatically based on your egress (the
+`dc` in the response).
 
-**别每次扫码都多登记一台设备**：登录页首次访问会下发一个随机 `deviceId` cookie，
-小米按它在账号「登录设备」里登记一台 web 设备（按浏览器 UA 显示成 Chrome）。每次
-扫码都新建空 cookie jar 就会不断新增。所以按 profile 生成并持久化一个稳定的
-`deviceId`（`scan_device.json`，形如 `wb_{uuid}`），每次扫码作为 cookie 带上——
-实测服务端会原样沿用（`Set-Cookie` 回显同值），小米于是认成同一台，不再新增。
+**Do not register one more device on every scan**: on first access the login page
+issues a random `deviceId` cookie, and Xiaomi registers a web device under the
+account's "logged-in devices" according to it (shown as Chrome, based on the browser
+UA). Creating a fresh empty cookie jar for each scan would keep adding more. So a
+stable `deviceId` is generated and persisted per profile (`scan_device.json`, shaped
+like `wb_{uuid}`) and sent as a cookie on every scan — testing shows the server reuses
+it as is (`Set-Cookie` echoes the same value), so Xiaomi treats it as the same device
+and adds no new one.
 
-那台设备**显示成什么名字**取决于登录请求的 `User-Agent`（小米按 UA 解析）。默认
-用 `mi-home-cli/{版本}` 而不是浏览器 UA，免得账号里全是「Chrome」；可用
-`mi config set scan_device_name <名字>` 或环境变量 `MI_SCAN_DEVICE_NAME` 自定义。
-实测账号页对任意 UA 都能正常出二维码，不必伪装浏览器；但 UA 是 HTTP 头，只能
-ASCII，所以设备名不能带中文（设置时会校验拦下）。
+**What name that device is shown under** depends on the `User-Agent` of the login
+request (Xiaomi parses the UA). The default is `mi-home-cli/{version}` rather than a
+browser UA, so that the account is not full of "Chrome" entries; it can be customised
+with `mi config set scan_device_name <name>` or the `MI_SCAN_DEVICE_NAME` environment
+variable. Testing shows the account page issues a QR code normally for any UA, so
+there is no need to impersonate a browser; but the UA is an HTTP header and can only
+be ASCII, so the device name cannot contain non-ASCII characters (this is validated and rejected
+when it is set).
 
-**首次授权的兜底**：小米对首次授权强制要求手动点一次「同意并关联」（OAuth 授权
-确认，浏览器登录也一样），`skip_confirm=true` 只能跳过**以后**已授权过的登录。若
-首次扫码因此拿不到 code 或换 token 失败，扫码流程会退回到给出**原始授权链接**
-（`oauth2/authorize`，`skip_confirm=false`）——用浏览器打开或手机扫它的二维码
-登录并授权一次；完成后既可把浏览器回调地址粘回来直接换 token，也可直接回车重新
-扫码（此时授权已记住，`skip_confirm` 生效，不再弹）。授权链接较长，其二维码宽度
-超过终端列数时只给链接不画码（画了会换行折断反而扫不出）。
-
----
-
-## 4. 两个「好用度」核心：设备解析与属性解析
-
-CLI 的体验成败不在协议，在于**别让人记 did 和 siid/piid**。
-
-### 4.1 设备引用（`<device>` 参数）
-
-按顺序匹配，命中唯一即用：
-
-1. `did`（纯数字或带 `.sN` 子设备后缀）
-2. 用户别名（`mi device alias set 客厅灯 xxx`）
-3. 设备名精确匹配（大小写不敏感）
-4. `房间/设备名`，如 `客厅/吸顶灯`
-5. 设备名子串模糊匹配
-6. `model` 匹配（如 `yeelink.light.lamp4`）
-
-多个候选 → 报错并列出候选表（带 did、房间、model），退出码 `4`。可用 `--home` /
-`--room` / `--model` 缩小范围。
-
-家里不止一个家庭时，`mi home use <家庭>` 设一个默认家庭，之后解析只在这个家庭
-里进行——这是消除重名歧义最有效的一招。默认家庭按 `home_id` 匹配（家庭改名不
-受影响）。设备在别的家庭时不静默跨家庭操作，而是报错并指出它在哪个家庭，
-`--all-homes` 可临时跨家庭。
-
-### 4.2 属性 / action 引用
-
-`<prop>` 支持三种写法，从 spec 索引解析：
-
-- 数字：`2.1`
-- 全名：`light.brightness`（service 实例名.property 实例名）
-- 短名：`brightness`（该设备内唯一才允许，否则报错并提示用全名）
-
-值的处理全部由 spec 驱动：
-
-- `bool`：`on/off/true/false/1/0/开/关`
-- `uint8/int32/float`：按 `value-range` 校验 `min/max/step`，越界直接报错（不静默截断）
-- 枚举 `value-list`：允许写描述文本（`Mode=Sleep` / `模式=睡眠`）或数字，输出时反查描述
-- `string`：原样
-- 只读属性写入 / 不可读属性读取 → 在发请求前就本地拦截报错
-
-`action` 的入参按 spec 的 `in` 顺序，支持 `--in a --in b` 位置传参和 `--param name=value` 具名传参。
+**Fallback for the first authorization**: for a first authorization Xiaomi requires
+one manual tap on "Agree and link" (the OAuth consent, the same as for
+browser login); `skip_confirm=true` can only skip logins that were already authorized
+**afterwards**. If the first scan therefore fails to get a code or the token exchange
+fails, the scan flow falls back to giving the **original authorization link**
+(`oauth2/authorize`, `skip_confirm=false`) — open it in a browser, or scan its QR code
+with a phone, then log in and authorize once. When done, you can either paste the
+browser callback address back to exchange the token directly, or just press Enter to
+scan again (the authorization is remembered by then, `skip_confirm` takes effect, and
+the page no longer appears). The authorization link is rather long; when its QR code
+is wider than the terminal's columns, only the link is given and no code is drawn (a
+drawn one would wrap and break, making it unscannable).
 
 ---
 
-## 5. 输出与错误
+## 4. The two keys to usability: device resolution and property resolution
 
-- 默认 `table`（rich，自动适配终端宽度）；`-o json` 输出稳定 schema，**保证可被 `jq` 消费**（管道非 TTY 时自动关闭颜色）；另有 `-o yaml` / `-o plain`（只输出值，方便 `$(...)`）。
-- 所有写操作打印「属性 → 旧值 → 新值 → 结果」：写之前先批量读一次旧值，
-  多一次请求换来「改错了能照着回滚」。
-- **返回码不等于生效**。`prop/set` 的 `code` 只是回执：`0` 是成功，`1` 是
-  「已接受、设备执行中」——部分设备（实测 `dwdz.switch.sw0a01`）每次写入都
-  回 `1`，操作其实是成功的。把非 0 一律当失败会让这类设备的每条命令都报错。
-  因此 `0` 和 `1` 都算接受。想要确凿结论时加 `--verify`：写完回读一次，用真实
-  状态说话；回读跟不上时提示「可能有延迟」而不是判失败。默认不回读——写操作
-  多一次往返（约 0.6s）对交互式使用不划算，需要确认的场景再显式要。`--dry-run` 只解析不发请求，用于确认解析对不对。
-- 退出码：`0` 成功 / `1` 通用错误 / `2` 参数错误 / `3` 设备不存在 / `4` 引用有歧义 / `5` 设备离线 / `6` 属性或 action 不存在 / `7` 值非法 / `8` 网络错误 / `9` 云端返回错误 / `10` 未登录或 token 失效。
-- 错误信息把小米返回的 `code/message` 原样附在末尾（`--verbose` 时打印完整请求响应）。
+Whether the CLI experience succeeds does not depend on the protocol but on **not
+making people memorise dids and siid/piid**.
+
+### 4.1 Device references (the `<device>` argument)
+
+Matched in order; the first unique hit is used:
+
+1. `did` (purely numeric, or with a `.sN` sub-device suffix)
+2. User alias (`mi device alias set living-room-light xxx`)
+3. Exact device name match (case-insensitive)
+4. `room/device name`, e.g. `Living Room/Ceiling Light`
+5. Fuzzy substring match on the device name
+6. `model` match (e.g. `yeelink.light.lamp4`)
+
+Multiple candidates → an error listing the candidates (with did, room, model), exit
+code `4`. `--home` / `--room` / `--model` narrow the scope.
+
+When there is more than one home, `mi home use <home>` sets a default home, after
+which resolution only happens within that home — the most effective way to eliminate
+ambiguity from duplicate names. The default home is matched by `home_id` (renaming
+the home does not affect it). When a device is in another home, the CLI does not
+silently operate across homes but reports an error stating which home it is in;
+`--all-homes` crosses homes temporarily.
+
+### 4.2 Property / action references
+
+`<prop>` supports three notations, resolved from the spec index:
+
+- Numeric: `2.1`
+- Full name: `light.brightness` (service instance name.property instance name)
+- Short name: `brightness` (only allowed if unique within the device; otherwise an error suggests using the full name)
+
+Value handling is entirely driven by the spec:
+
+- `bool`: `on/off/true/false/1/0/yes/no`
+- `uint8/int32/float`: validated against `min/max/step` of `value-range`; out-of-range values are an error (never silently clamped)
+- Enum `value-list`: the description text (`mode=Sleep`, as `mi spec show` lists it) or the number may be written; on output the description is looked up
+- `string`: as is
+- Writing a read-only property / reading an unreadable property → caught locally with an error before any request is sent
+
+`action` input arguments follow the order of `in` in the spec; both positional passing with `--in a --in b` and named passing with `--param name=value` are supported.
 
 ---
 
-## 6. 分期实现
+## 5. Output and errors
 
-| 阶段 | 内容 | 产出 |
+- The default is `table` (rich, adapts to the terminal width automatically); `-o json` outputs a stable schema that is **guaranteed to be consumable by `jq`** (colours are turned off automatically when piped to a non-TTY); there are also `-o yaml` / `-o plain` (values only, handy for `$(...)`).
+- Every write operation prints "property → old value → new value → result": the old
+  values are read in one batch before writing, one extra request in exchange for
+  "being able to roll back by the book after a wrong change".
+- **A return code does not mean it took effect.** The `code` of `prop/set` is only a
+  receipt: `0` is success, `1` is "accepted, the device is executing" — some devices
+  (`dwdz.switch.sw0a01` in testing) answer `1` to every write, and the operation
+  actually succeeded. Treating every non-zero code as failure would make every
+  command for such devices report an error. So both `0` and `1` count as accepted.
+  For a firm conclusion add `--verify`: read back once after writing and let the real
+  state speak; when the read-back has not caught up, the hint says "there may be a
+  delay" instead of declaring failure. No read-back by default — one more round trip
+  per write (about 0.6s) is not worth it for interactive use; ask for it explicitly in
+  scenarios that need confirmation. `--dry-run` only parses and sends no request, to check that parsing is right.
+- Exit codes: `0` success / `1` generic error / `2` argument error / `3` device not found / `4` ambiguous reference / `5` device offline / `6` property or action not found / `7` invalid value / `8` network error / `9` the cloud returned an error / `10` not logged in or token invalid.
+- Error messages append the `code/message` returned by Xiaomi verbatim at the end (with `--verbose` the full request and response are printed).
+
+---
+
+## 6. Implementation phases
+
+| Phase | Content | Outcome |
 | --- | --- | --- |
-| **M1 打通** | ✅ OAuth 登录（本地回调 + mDNS + `--manual` 兜底）、token 存储/刷新、`auth *`、`profile *`、`doctor` | 能登录 |
-| **M2 控制** | ✅ `home/room/device list`、设备清单缓存与解析、spec 拉取与缓存、`spec show/search/dump`、`get`/`set`/`action`、值转换、`on/off/toggle`、`-o json`、`--dry-run` | 核心可用 |
-| **M3 顺手** | ✅ `light`/`climate`/`cover`/`fan` 语义命令、`device alias`、写操作显示旧值→新值、shell 补全（typer 内置） | 日常能用 |
-| **M4 实时** | ✅ 云端 MQTT `watch`（属性/事件/上下线），流式输出、逐行 JSON | 可做脚本触发 |
-| **M5 本地** | ✅ 局域网通道（自行实现 miIO）、`lan list/discover/status`、`--channel auto\|cloud\|lan` 回落 | 低延迟、断网可用 |
-| 可选 | `repl` 交互模式、场景（`/app/v2/scene/*` 需自行探索验证，上游未使用）、中枢网关控制 | — |
+| **M1 Get it working** | ✅ OAuth login (local callback + mDNS + `--manual` fallback), token storage/refresh, `auth *`, `profile *`, `doctor` | can log in |
+| **M2 Control** | ✅ `home/room/device list`, device list cache and resolution, spec fetching and caching, `spec show/search/dump`, `get`/`set`/`action`, value conversion, `on/off/toggle`, `-o json`, `--dry-run` | core usable |
+| **M3 Convenience** | ✅ the semantic commands `light`/`climate`/`cover`/`fan`, `device alias`, write operations showing old value → new value, shell completion (built into typer) | usable day to day |
+| **M4 Real time** | ✅ cloud MQTT `watch` (properties / events / online state), streaming output, line-delimited JSON | can trigger scripts |
+| **M5 Local** | ✅ LAN channel (own miIO implementation), `lan list/discover/status`, `--channel auto\|cloud\|lan` fallback | low latency, works offline |
+| Optional | `repl` interactive mode, scenes (`/app/v2/scene/*` needs exploring and verifying ourselves, unused upstream), central hub gateway control | — |
 
-## 6.5 明确的非目标：只用 OAuth2
+## 6.5 An explicit non-goal: OAuth2 only
 
-米家生态里存在两套并行的身份：
+Two parallel identities exist in the Mi Home ecosystem:
 
-| | OAuth2（本项目 / 官方 HA 集成） | 账号密码（米家 App、al-one/hass-xiaomi-miot） |
+| | OAuth2 (this project / the official HA integration) | Account password (the Mi Home app, al-one/hass-xiaomi-miot) |
 | --- | --- | --- |
-| 拿到什么 | `access_token` | `serviceToken` + `ssecurity`，请求要 RC4 签名 |
-| 能用的接口 | `/app/v2/*` 这套 spec 接口 | 上面全部，**外加** smartcamera、场景等私有接口 |
-| 代价 | 授权页登录，全程不碰用户密码 | 要处理密码、二次验证、签名算法 |
+| What you get | `access_token` | `serviceToken` + `ssecurity`; requests need RC4 signing |
+| Usable APIs | the `/app/v2/*` set of spec APIs | all of the above, **plus** private APIs such as smartcamera and scenes |
+| Cost | login on the authorization page, never touching the user's password | has to handle passwords, two-step verification and the signing algorithm |
 
-**本项目只用 OAuth2。** 代价是下面这些做不了，属于已知且接受的缺口：
+**This project only uses OAuth2.** The price is that the following cannot be done, which are known and accepted gaps:
 
-- **摄像机报警录像回放**：`business.smartcamera.api.io.mi.com` 的 `get/eventlist`
-  与 `common/app/m3u8` 需要 `serviceToken` + `ssecurity` + RC4 签名。
-- **米家场景 / 自动化**：同样在那套身份之下。
+- **Camera alarm recording playback**: `get/eventlist` and `common/app/m3u8` on
+  `business.smartcamera.api.io.mi.com` require `serviceToken` + `ssecurity` + RC4
+  signing.
+- **Mi Home scenes / automations**: likewise under that identity.
 
-理由：不碰用户密码是这个 CLI 的安全底线之一——OAuth2 的授权在浏览器里完成，
-CLI 只拿到一个 3 天有效期、可撤销的 token；换成账号密码就要在本地处理密码和
-二次验证，风险和维护成本都不是这点功能换得来的。
+Rationale: not touching the user's password is one of this CLI's security baselines —
+OAuth2 authorization is completed in the browser, and the CLI only gets a revocable
+token valid for 3 days; switching to account passwords would mean handling passwords
+and two-step verification locally, and neither the risk nor the maintenance cost is
+worth these few features.
 
-需要那些能力的人，用 [al-one/hass-xiaomi-miot](https://github.com/al-one/hass-xiaomi-miot)
-（Apache-2.0）更合适。
+Those who need these capabilities are better served by
+[al-one/hass-xiaomi-miot](https://github.com/al-one/hass-xiaomi-miot) (Apache-2.0).
 
-顺带澄清一个容易混淆的点：**摄像机的实时推流地址不在这条分界线上**。部分型号的
-spec 里带 `camera-stream-for-google-home` / `camera-stream-for-amazon-alexa` 服务，
-`start-hls-stream` / `start-rtsp-stream` 是普通的 spec 动作，OAuth2 就能调，
-`mi action <设备> start-rtsp-stream` 直接可用，返回的地址会带上属性名。
-没有这两个服务的型号（如 `chuangmi.camera.039c01`、`chuangmi.camera.079ac1`）
-则只有 `p2p-stream`，那是小米私有的 cs2 协议，不在 miot-spec 的数据面里。
-支不支持是按 SKU 定的，同一款产品的不同 SKU 可能一个有一个没有——完整名单和
-扫描脚本见 [camera-stream.md](camera-stream.md)。
+To clear up an easily confused point along the way: **the camera live stream address
+is not on this dividing line**. The spec of some models carries the
+`camera-stream-for-google-home` / `camera-stream-for-amazon-alexa` services;
+`start-hls-stream` / `start-rtsp-stream` are ordinary spec actions that OAuth2 can
+call, `mi action <device> start-rtsp-stream` just works, and the returned address
+comes with the property name. Models without these two services (such as
+`chuangmi.camera.039c01` and `chuangmi.camera.079ac1`) only have `p2p-stream`, which
+is Xiaomi's private cs2 protocol and not part of miot-spec's data plane. Support is
+decided per SKU; different SKUs of the same product may differ, one having it and
+the other not — for the full list and the scan script see
+[camera-stream.md](camera-stream.md).
 
-## 7. 测试策略
+## 7. Testing strategy
 
-- 协议层用录制的响应做 fixture 回放测试（**fixture 必须脱敏**：did、uid、token、ssid/bssid、经纬度）。
-- 解析层（设备解析、属性解析、值转换、退出码）纯单测，不碰网络。
-- 一个 `--mock` 模式：用本地 fixture 跑完整命令，便于写文档示例和 CI。
-- CI 只跑离线测试；真机测试用打了 `@pytest.mark.live` 的用例本地手动跑。
+- The protocol layer is tested by replaying recorded responses as fixtures (**fixtures must be sanitised**: did, uid, token, ssid/bssid, latitude/longitude).
+- The resolution layer (device resolution, property resolution, value conversion, exit codes) is pure unit tests that never touch the network.
+- A `--mock` mode: run complete commands against local fixtures, convenient for writing documentation examples and for CI.
+- CI only runs offline tests; real-device tests are cases marked `@pytest.mark.live`, run manually and locally.
 
-## 8. 已知风险
+## 8. Known risks
 
-1. **接口非公开契约**：`app/v2/*` 是米家给 HA 集成用的接口，随时可能变；把 URL 和字段集中在 `core/cloud.py` 一处，方便跟进。
-2. **`redirect_uri` 白名单**：已实测确认 host 锁死在 `homeassistant.local:8123`
-   （见 3.2）。小米若调整白名单，自动回调会失效，粘贴方式不受影响。
-3. **频率限制**：批量读属性要沿用「聚合 + 单请求 ≤150 条」的策略，`watch` 用 MQTT 而不是轮询。
-4. **局域网覆盖有限**：只有 `connect_type ∈ {0,8,12,23}` 且有 token 的设备
-   （直连路由器的 WiFi/有线设备）可以直连；蓝牙 Mesh、ZigBee 走网关的不行。
-   实测某账号 72 台设备里只有 21 台够格。`--channel auto` 会在任何一步不成立时
-   静默回落云端，所以覆盖有限不影响可用性。
-5. **凭据安全**：device token 等价于局域网控制权，文件权限 + 输出打码 + 不写日志三重防护。
+1. **The APIs are not a public contract**: `app/v2/*` is the API Mi Home provides for the HA integration and may change at any time; URLs and fields are concentrated in the single place `core/cloud.py` to make following changes easy.
+2. **The `redirect_uri` allowlist**: testing confirmed the host is locked to
+   `homeassistant.local:8123` (see 3.2). If Xiaomi adjusts the allowlist, the
+   automatic callback stops working; pasting is unaffected.
+3. **Rate limits**: batch property reads must keep to the "aggregation + ≤150 entries per request" strategy, and `watch` uses MQTT rather than polling.
+4. **Limited LAN coverage**: only devices with `connect_type ∈ {0,8,12,23}` and a
+   token (WiFi/wired devices connected directly to the router) can be reached
+   directly; Bluetooth Mesh and ZigBee devices behind a gateway cannot. In testing,
+   only 21 of the 72 devices of one account qualified. `--channel auto` silently
+   falls back to the cloud whenever any step does not hold, so the limited coverage
+   does not affect usability.
+5. **Credential security**: a device token is equivalent to LAN control; triple protection through file permissions + masked output + never writing it to logs.

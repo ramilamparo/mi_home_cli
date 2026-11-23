@@ -1,7 +1,8 @@
-"""语义命令：`mi light`、`mi climate`、`mi cover`、`mi fan`。
+"""Semantic commands: `mi light`, `mi climate`, `mi cover`, `mi fan`.
 
-都是 `mi set` 的糖：把人话选项翻成 spec 属性再批量下发。不带任何选项时
-显示这台设备的当前状态。
+All of them are sugar for `mi set`: plain-language options are translated into spec
+properties and sent as one batch. Without any option, the device's current state is
+shown.
 """
 from __future__ import annotations
 
@@ -9,7 +10,6 @@ from typing import Annotated, Any, Optional
 
 import typer
 
-from ..i18n import t
 from .. import render
 from ..core.registry import Device
 from ..core.semantic import STATUS_PROPERTIES, Planner, format_color, parse_color
@@ -32,7 +32,7 @@ from .prop import (
     verify_after_write,
 )
 
-DeviceArg = Annotated[str, typer.Argument(help=t("设备名称、别名或 did"))]
+DeviceArg = Annotated[str, typer.Argument(help="Device name, alias or did")]
 
 
 def _ctx(ctx: typer.Context) -> AppContext:
@@ -52,7 +52,7 @@ def _show_status(
         if (prop := spec.by_name(name, readable=True)) is not None
     ]
     if not props:
-        render.warn(t("{label} 没有可读的状态属性", label=device.label))
+        render.warn(f"{device.label} has no readable state properties")
         return
     with app_ctx.session() as session:
         results = _channel(app_ctx, session, device).get_props(
@@ -71,13 +71,8 @@ def _show_status(
         data[prop.description or prop.name] = (
             format_color(value) if prop.name == "color" else format_value(prop, value)
         )
-    # 键是 spec 里的属性描述，属于数据，不当列名翻译
-    render.output(
-        data,
-        pick_output(app_ctx, output),
-        title=t("{label}（{location}）", label=device.label, location=device.location),
-        data_keys=True,
-    )
+    render.output(data, pick_output(app_ctx, output), title=f"{device.label} ("
+                                                            f"{device.location})")
 
 
 def _apply(
@@ -85,13 +80,13 @@ def _apply(
 ) -> None:
     params = planner.params(device.did)
     if app_ctx.dry_run:
-        render.info(t("[dim]--dry-run，只解析不下发：[/dim]"))
+        render.info("[dim]--dry-run: parsed only, nothing sent:[/dim]")
         render.output(
             [
                 {
-                    "属性": change.prop.full_name,
+                    "Property": change.prop.full_name,
                     "id": change.prop.ref,
-                    "写入值": change.value,
+                    "Value to write": change.value,
                 }
                 for change in planner.changes
             ],
@@ -135,16 +130,16 @@ def _apply(
         result = _explain_code(code)
         if ok and key in actual:
             result = (
-                t("成功")
+                "OK"
                 if actual[key] == change.value
-                else t("已下发，回读仍是 {v0}", v0=shown(change.prop, actual[key]))
+                else f"sent, still reads back as {shown(change.prop, actual[key])}"
             )
         rows.append(
             {
-                "属性": change.prop.full_name,
-                "旧值": shown(change.prop, before.get(key)),
-                "新值": shown(change.prop, change.value),
-                "结果": result,
+                "Property": change.prop.full_name,
+                "Old value": shown(change.prop, before.get(key)),
+                "New value": shown(change.prop, change.value),
+                "Result": result,
             }
         )
     render.output(rows, pick_output(app_ctx, output), title=device.label)
@@ -161,25 +156,27 @@ def light(
     ctx: typer.Context,
     device: DeviceArg,
     on: Annotated[
-        Optional[bool], typer.Option("--on/--off", help=t("开灯 / 关灯"))
+        Optional[bool], typer.Option("--on/--off", help="Turn the light on / off")
     ] = None,
     brightness: Annotated[
-        Optional[str], typer.Option("--brightness", "-b", help=t("亮度，一般是 1~100"))
+        Optional[str], typer.Option("--brightness", "-b", help="Brightness, usually "
+                                                               "1~100")
     ] = None,
     ct: Annotated[
-        Optional[str], typer.Option("--ct", help=t("色温，单位开尔文，如 4000"))
+        Optional[str], typer.Option("--ct", help="Color temperature in kelvin, e.g. "
+                                                 "4000")
     ] = None,
     color: Annotated[
-        Optional[str], typer.Option("--color", help=t("颜色，如 #ff8800 或 红"))
+        Optional[str], typer.Option("--color", help="Color, e.g. #ff8800 or red")
     ] = None,
     mode: Annotated[
-        Optional[str], typer.Option("--mode", help=t("模式，如 日光 / 月光"))
+        Optional[str], typer.Option("--mode", help="Mode, e.g. Day / Night")
     ] = None,
     dry_run: DryRunOption = None,
     verify: VerifyOption = None,
     output: OutputOption = None,
 ) -> None:
-    """控制灯。不带选项时显示当前状态。"""
+    """Control a light. Shows the current state when no option is given."""
     app_ctx = apply_write_flags(_ctx(ctx), dry_run, verify)
     target, spec = _target(app_ctx, device)
     if on is None and not any((brightness, ct, color, mode)):
@@ -203,22 +200,22 @@ def climate(
     ctx: typer.Context,
     device: DeviceArg,
     on: Annotated[
-        Optional[bool], typer.Option("--on/--off", help=t("开机 / 关机"))
+        Optional[bool], typer.Option("--on/--off", help="Power on / off")
     ] = None,
     mode: Annotated[
-        Optional[str], typer.Option("--mode", help=t("模式，如 制冷 / 制热 / 自动"))
+        Optional[str], typer.Option("--mode", help="Mode, e.g. Cool / Heat / Auto")
     ] = None,
     temp: Annotated[
-        Optional[str], typer.Option("--temp", "-t", help=t("目标温度"))
+        Optional[str], typer.Option("--temp", "-t", help="Target temperature")
     ] = None,
     fan: Annotated[
-        Optional[str], typer.Option("--fan", help=t("风速挡位"))
+        Optional[str], typer.Option("--fan", help="Fan level")
     ] = None,
     dry_run: DryRunOption = None,
     verify: VerifyOption = None,
     output: OutputOption = None,
 ) -> None:
-    """控制空调、暖风机等温控设备。不带选项时显示当前状态。"""
+    """Control air conditioners, heaters and other climate devices. Shows the current state when no option is given."""
     app_ctx = apply_write_flags(_ctx(ctx), dry_run, verify)
     target, spec = _target(app_ctx, device)
     if on is None and not any((mode, temp, fan)):
@@ -239,32 +236,33 @@ def climate(
 def cover(
     ctx: typer.Context,
     device: DeviceArg,
-    open_: Annotated[bool, typer.Option("--open", help=t("打开"))] = False,
-    close: Annotated[bool, typer.Option("--close", help=t("关闭"))] = False,
-    stop: Annotated[bool, typer.Option("--stop", help=t("停住"))] = False,
+    open_: Annotated[bool, typer.Option("--open", help="Open")] = False,
+    close: Annotated[bool, typer.Option("--close", help="Close")] = False,
+    stop: Annotated[bool, typer.Option("--stop", help="Stop")] = False,
     position: Annotated[
-        Optional[str], typer.Option("--position", "-p", help=t("开合百分比 0~100"))
+        Optional[str], typer.Option("--position", "-p", help="Position in percent, "
+                                                             "0~100")
     ] = None,
     dry_run: DryRunOption = None,
     verify: VerifyOption = None,
     output: OutputOption = None,
 ) -> None:
-    """控制窗帘等开合类设备。不带选项时显示当前状态。"""
+    """Control curtains and other open/close devices. Shows the current state when no option is given."""
     app_ctx = apply_write_flags(_ctx(ctx), dry_run, verify)
     target, spec = _target(app_ctx, device)
     if not any((open_, close, stop, position)):
         _show_status(app_ctx, target, spec, "cover", output)
         return
     if sum((open_, close, stop)) > 1:
-        raise typer.BadParameter(t("--open / --close / --stop 只能给一个"))
+        raise typer.BadParameter("Only one of --open / --close / --stop may be given")
 
     planner = Planner(spec, target.label)
     if open_:
-        planner.add_enum("--open", ("motor-control",), "open", "打开", "上升")
+        planner.add_enum("--open", ("motor-control",), "open")
     if close:
-        planner.add_enum("--close", ("motor-control",), "close", "关闭", "下降")
+        planner.add_enum("--close", ("motor-control",), "close")
     if stop:
-        planner.add_enum("--stop", ("motor-control",), "pause", "stop", "暂停", "停止")
+        planner.add_enum("--stop", ("motor-control",), "pause", "stop")
     if position is not None:
         planner.add_parsed("--position", ("target-position",), position)
     _apply(app_ctx, target, planner, output)
@@ -274,20 +272,20 @@ def fan(
     ctx: typer.Context,
     device: DeviceArg,
     on: Annotated[
-        Optional[bool], typer.Option("--on/--off", help=t("开 / 关"))
+        Optional[bool], typer.Option("--on/--off", help="On / off")
     ] = None,
     speed: Annotated[
-        Optional[str], typer.Option("--speed", "-s", help=t("风速挡位"))
+        Optional[str], typer.Option("--speed", "-s", help="Fan level")
     ] = None,
-    mode: Annotated[Optional[str], typer.Option("--mode", help=t("模式"))] = None,
+    mode: Annotated[Optional[str], typer.Option("--mode", help="Mode")] = None,
     swing: Annotated[
-        Optional[bool], typer.Option("--swing/--no-swing", help=t("摇头"))
+        Optional[bool], typer.Option("--swing/--no-swing", help="Oscillation")
     ] = None,
     dry_run: DryRunOption = None,
     verify: VerifyOption = None,
     output: OutputOption = None,
 ) -> None:
-    """控制风扇、净化器等带挡位的设备。不带选项时显示当前状态。"""
+    """Control fans, purifiers and other devices with levels. Shows the current state when no option is given."""
     app_ctx = apply_write_flags(_ctx(ctx), dry_run, verify)
     target, spec = _target(app_ctx, device)
     if on is None and swing is None and not any((speed, mode)):

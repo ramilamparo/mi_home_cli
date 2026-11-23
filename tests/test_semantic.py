@@ -1,4 +1,4 @@
-"""语义命令的映射层。"""
+"""The mapping layer of the semantic commands."""
 import pytest
 
 from mi_home_cli.core.semantic import (
@@ -82,13 +82,13 @@ COVER = _spec(
 def test_parse_color_hex_and_names():
     assert parse_color("#ff8800") == 0xFF8800
     assert parse_color("ff8800") == 0xFF8800
-    assert parse_color("红") == 0xFF0000
+    assert parse_color("red") == 0xFF0000
     assert parse_color("BLUE") == 0x0000FF
 
 
 def test_parse_color_rejects_garbage():
     with pytest.raises(InvalidValue):
-        parse_color("紫红偏橘")
+        parse_color("reddish-purple-ish")
     with pytest.raises(InvalidValue):
         parse_color("#fff")
 
@@ -98,7 +98,7 @@ def test_format_color():
 
 
 def test_by_name_prefers_primary_service():
-    """灯的 on 有两个（主体和指示灯），语义命令要挑主体那个。"""
+    """A light has two `on` properties (main body and indicator light); the semantic commands must pick the main one."""
     assert LIGHT.by_name("on", writable=True).siid == 2
 
 
@@ -108,7 +108,7 @@ def test_by_name_respects_access_filter():
 
 
 def test_by_name_falls_back_through_candidates():
-    # fan-level 不存在时退回 speed-level
+    # falls back to speed-level when fan-level does not exist
     spec = _spec(
         "fan",
         [
@@ -123,11 +123,11 @@ def test_by_name_falls_back_through_candidates():
 
 
 def test_planner_builds_params_with_on_first():
-    planner = Planner(LIGHT, "台灯")
+    planner = Planner(LIGHT, "Desk Lamp")
     planner.add_parsed("--brightness", ("brightness",), "60")
     planner.add_raw("--on/--off", ("on",), True)
     params = planner.params("d1")
-    # on 排在最前：先通电再调参数
+    # on comes first: power up before adjusting parameters
     assert [(p["siid"], p["piid"], p["value"]) for p in params] == [
         (2, 1, True),
         (2, 2, 60),
@@ -135,25 +135,25 @@ def test_planner_builds_params_with_on_first():
 
 
 def test_planner_validates_values():
-    planner = Planner(LIGHT, "台灯")
+    planner = Planner(LIGHT, "Desk Lamp")
     with pytest.raises(InvalidValue):
         planner.add_parsed("--brightness", ("brightness",), "300")
 
 
 def test_planner_reports_unsupported_option():
-    planner = Planner(COVER, "窗帘")
+    planner = Planner(COVER, "Curtain")
     with pytest.raises(SpecNotFound) as excinfo:
         planner.add_parsed("--brightness", ("brightness",), "60")
-    assert "不支持 --brightness" in str(excinfo.value)
-    assert excinfo.value.hint  # 要告诉用户去哪儿看支持什么
+    assert "does not support --brightness" in str(excinfo.value)
+    assert excinfo.value.hint  # must tell the user where to see what is supported
 
 
 def test_enum_value_matches_keywords():
     prop = COVER.by_name("motor-control", writable=True)
-    assert enum_value(prop, "open", "打开") == 1
-    assert enum_value(prop, "close", "关闭") == 2
-    assert enum_value(prop, "pause", "暂停") == 0
-    assert enum_value(prop, "找不到的") is None
+    assert enum_value(prop, "open") == 1
+    assert enum_value(prop, "close") == 2
+    assert enum_value(prop, "pause") == 0
+    assert enum_value(prop, "nonexistent") is None
 
 
 def test_planner_enum_missing_raises():
@@ -174,6 +174,6 @@ def test_planner_enum_missing_raises():
             }
         ],
     )
-    planner = Planner(spec, "窗帘")
+    planner = Planner(spec, "Curtain")
     with pytest.raises(SpecNotFound):
-        planner.add_enum("--close", ("motor-control",), "close", "关闭")
+        planner.add_enum("--close", ("motor-control",), "close")

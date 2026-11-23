@@ -1,27 +1,34 @@
-"""小米账号扫码登录（QR scan login）。
+"""Xiaomi account QR-code login (QR scan login).
 
-**不引入无头浏览器**，纯 API 调用复刻「浏览器打开授权页后跳转到登录页」的整个
-流程，最终拿到和浏览器登录完全一样的授权码 `code`，再交给既有的
-`OAuthClient.exchange_code` 换 token——扫码只是换了一种「拿 code」的方式，后半段
-和 `mi auth login` 一字不差。
+**No headless browser is introduced**; the whole flow of "a browser opens the
+authorization page and is redirected to the login page" is reproduced with plain API
+calls, ending up with exactly the same authorization `code` as a browser login,
+which is then handed to the existing `OAuthClient.exchange_code` for the token
+exchange — scanning is just another way of "getting the code", and the second half
+is identical to `mi auth login`.
 
-跳转链（解析授权页跳转得到）：
+The redirect chain (found by analysing the authorization page's redirects):
 
-  1. GET `oauth2/authorize`（`skip_confirm=true`）→ 302 到 `pass/serviceLogin`；
-  2. GET `serviceLogin?_json=true` → 拿 `_sign` / `sid` / `qs` / `callback` /
-     `serviceParam`（未登录时响应里 `code=70016 登录验证失败`，是正常状态）；
-  3. GET `longPolling/loginUrl`（带上一步的参数）→ 拿 `loginUrl`（编码进二维码给
-     用户扫的地址）、`lp`（长轮询地址）、`qr`（服务端渲染的二维码图片，兜底用）；
-  4. 终端里把 `loginUrl` 渲染成二维码，用户用小米 App「我的 → 扫一扫」扫码并在
-     手机上确认登录；
-  5. 长轮询 `lp`，它会一直挂起直到手机确认，确认后返回一个 `location`；
-  6. 携带一路攒下来的 cookie 跟随 `location` 的跳转链，走到 `redirect_uri` 时
-     （那台 `homeassistant.local` 多半不可达，所以只解析不真正请求）从 query 里
-     取出 `code` 和 `state`；
-  7. `code` 交给 `OAuthClient.exchange_code`。
+  1. GET `oauth2/authorize` (`skip_confirm=true`) → 302 to `pass/serviceLogin`;
+  2. GET `serviceLogin?_json=true` → get `_sign` / `sid` / `qs` / `callback` /
+     `serviceParam` (when not logged in the response has `code=70016`, "login
+     verification failed", which is the normal state);
+  3. GET `longPolling/loginUrl` (with the parameters of the previous step) → get
+     `loginUrl` (the address encoded into the QR code for the user to scan), `lp`
+     (the long-polling address) and `qr` (a server-rendered QR code image, as a
+     fallback);
+  4. render `loginUrl` as a QR code in the terminal; the user scans it with a Xiaomi
+     app ("Profile → Scan") and confirms the login on the phone;
+  5. long-poll `lp`, which hangs until the phone confirms and then returns a
+     `location`;
+  6. follow the redirect chain of `location` carrying the cookies collected along
+     the way; on reaching `redirect_uri` (that `homeassistant.local` is most likely
+     unreachable, so it is only parsed, not actually requested) take `code` and
+     `state` from the query;
+  7. hand `code` to `OAuthClient.exchange_code`.
 
-全程 cookie 由同一个 `httpx.Client` 维持（`deviceId` 等 cookie 在第 2 步种下，
-后面每一步都要带着）。
+Cookies are kept by one and the same `httpx.Client` throughout (cookies such as
+`deviceId` are set in step 2 and must be carried in every later step).
 """
 from __future__ import annotations
 
@@ -34,28 +41,29 @@ from urllib.parse import urlencode, urljoin, urlparse
 
 import httpx
 
-from ..i18n import t
 from ..errors import CloudError, MiCliError, NetworkError
 from .callback import CallbackResult, parse_pasted
 from .oauth import build_auth_url
 from . import const
 
-# 单次长轮询请求最多挂多久；挂到点没结果就重发（总时限由 deadline 控制）。
+# How long a single long-polling request may hang; when it runs out without a result it
+# is re-sent (the overall limit is controlled by deadline).
 _LP_POLL_TIMEOUT = 30.0
-# 跳转链最多跟几跳，防止异常情况下打转。
+# Maximum number of hops followed in the redirect chain, to avoid spinning in abnormal
+# cases.
 _MAX_REDIRECTS = 10
-# 未登录时 serviceLogin 返回的 code，属正常状态而非错误。
+# The code serviceLogin returns when not logged in; a normal state, not an error.
 _NOT_LOGGED_IN = 70016
 
 
 @dataclass
 class QrChallenge:
-    """一次扫码登录的「待扫」状态。"""
+    """The "waiting to be scanned" state of one QR-code login."""
 
-    login_url: str  # 编码进二维码给用户扫的地址
-    lp_url: str  # 长轮询地址
-    qr_image_url: str  # 服务端渲染的二维码图片 URL（没装 segno 时的兜底）
-    timeout: int  # 服务端给的二维码有效期（秒）
+    login_url: str  # the address encoded into the QR code for the user to scan
+    lp_url: str  # the long-polling address
+    qr_image_url: str  # URL of the server-rendered QR code image (fallback when segno is missing)
+    timeout: int  # QR code validity given by the server (seconds)
 
 
 def _strip_prefix(text: str) -> str:
@@ -66,35 +74,45 @@ def _strip_prefix(text: str) -> str:
 
 
 def render_qr(data: str) -> str | None:
-    """把内容渲染成终端二维码字符串。
+    """Render content as a terminal QR code string.
 
-    每个字符单元用「上半块 `▀`」叠两个纵向模块（高度减半，整体紧凑到能一屏放下，
-    这对能不能扫到很关键）：**上模块画成前景色、下模块交给背景色**。下半个模块由
-    背景色填充，会连同行间距的留白一起盖掉——这样在有 line-height 的终端里，半块
-    之间也不会裂出横条（旧写法用 `█▀▄` 三种字形，行距一大就发毛）。前景/背景显式
-    给黑与白，深色/浅色主题都不反色。0=亮（白），1=暗（黑）。
+    Each character cell stacks two vertical modules using the upper half block `▀`
+    (halving the height and making the whole thing compact enough to fit on one screen,
+    which is crucial for being scannable): **the upper module is drawn in the foreground
+    colour and the lower module is left to the background colour**. The lower half is
+    filled by the background colour, which also covers the line-spacing gap — so even in
+    terminals with a line-height no stripes open up between half blocks (the old
+    approach used the three glyphs `█▀▄` and frayed as soon as line spacing grew).
+    Foreground/background are given explicitly as black and white, so neither dark nor
+    light themes invert it. 0 = light (white), 1 = dark (black).
 
-    仍受限于终端字符格的宽高比：多数终端「高≈2×宽」，此时模块接近正方；个别接近
-    正方的字体/渲染器下模块会偏扁，但用背景色成块填充后至少干净、可扫。
+    It is still limited by the aspect ratio of terminal character cells: in most
+    terminals "height ≈ 2 × width", which makes modules nearly square; with the odd font
+    or renderer that is close to square, modules come out flattened, but filled as solid
+    blocks by the background colour they are at least clean and scannable.
 
-    内容太长导致二维码宽度超过终端列数时返回 None——宁可不画也不能让它换行折断
-    （折断的二维码根本扫不出）；由调用方退回到给链接。`segno` 是直接依赖，正常总能
-    导入；万一被环境裁掉也返回 None。
+    When the content is so long that the QR code is wider than the terminal's columns,
+    None is returned — better not to draw at all than to let it wrap and break (a broken
+    QR code cannot be scanned at all); the caller falls back to giving the link. `segno`
+    is a direct dependency and can normally always be imported; if the environment has
+    stripped it, None is returned as well.
     """
     try:
         import segno
     except ImportError:
         return None
 
-    # error='m'：约 15% 纠错，二维码被终端字体略微拉伸也还扫得动。
+    # error='m': about 15% error correction, so the QR code still scans when the
+    # terminal font stretches it slightly.
     matrix = [list(row) for row in segno.make(data, error="m").matrix_iter(
         scale=1, border=4
     )]
-    # 每个模块占 1 列；超过终端宽度会换行折断，直接放弃让调用方给链接。
+    # Each module takes 1 column; wider than the terminal it would wrap and break, so
+    # give up and let the caller give the link.
     columns = shutil.get_terminal_size((80, 24)).columns
     if len(matrix[0]) > columns:
         return None
-    if len(matrix) % 2:  # 补一行全亮，好两两配对
+    if len(matrix) % 2:  # pad with one all-light row so rows pair up
         matrix.append([0] * len(matrix[0]))
 
     reset = "\x1b[0m"
@@ -103,20 +121,22 @@ def render_qr(data: str) -> str | None:
         parts: list[str] = []
         prev = None
         for t, b in zip(top, bottom):
-            # 前景 = 上模块，背景 = 下模块；暗=黑(30/40)，亮=白(37/47)。
+            # foreground = upper module, background = lower module; dark = black
+            # (30/40), light = white (37/47).
             color = f"\x1b[{'30' if t else '37'};{'40' if b else '47'}m"
             if color != prev:
                 parts.append(color)
                 prev = color
-            parts.append("▀")  # ▀ 上半块
+            parts.append("▀")  # ▀ upper half block
         lines.append("".join(parts) + reset)
     return "\n".join(lines)
 
 
 class QrLoginClient:
-    """扫码登录的三步走：`start`（拿二维码）→ `poll`（等确认）→ `resolve_code`。
+    """The three steps of QR-code login: `start` (get the QR code) → `poll` (wait for confirmation) → `resolve_code`.
 
-    HTTP 客户端可注入，方便离线测试；不注入时自建一个带 cookie 的 client。
+    The HTTP client can be injected, which makes offline testing easy; when none is
+    injected, a client with cookies is created.
     """
 
     def __init__(
@@ -135,7 +155,8 @@ class QrLoginClient:
         self.device_id = device_id
         self.state = state
         self._trace = trace
-        # 小米「登录设备」里显示的名字是从这个 User-Agent 解析出来的，可自定义。
+        # The name shown under Xiaomi's "logged-in devices" is parsed from this User-
+        # Agent and can be customised.
         self._client = client or httpx.Client(
             timeout=timeout,
             follow_redirects=False,
@@ -143,8 +164,9 @@ class QrLoginClient:
         )
         self._owns_client = client is None
         if web_device_id:
-            # 预置一个稳定的 web deviceId，服务端会原样沿用（实测 Set-Cookie 回显同值），
-            # 这样每次扫码在小米「登录设备」里都是同一台，不会越登记越多。
+            # Preset a stable web deviceId; the server reuses it as is (in testing
+            # Set-Cookie echoes the same value), so every scan is the same device under
+            # Xiaomi's "logged-in devices" and the list does not keep growing.
             self._client.cookies.set(
                 "deviceId", web_device_id, domain=const.ACCOUNT_HOST, path="/"
             )
@@ -171,13 +193,7 @@ class QrLoginClient:
             else:
                 response = self._client.get(url, timeout=timeout)
         except httpx.HTTPError as err:
-            raise NetworkError(
-                t(
-                    "连接 {netloc} 失败：{err}",
-                    netloc=urlparse(url).netloc,
-                    err=err,
-                )
-            ) from err
+            raise NetworkError(f"Connecting to {urlparse(url).netloc} failed: {err}") from err
         if self._trace:
             self._trace(f"<- HTTP {response.status_code}")
         return response
@@ -187,14 +203,14 @@ class QrLoginClient:
             obj = json.loads(_strip_prefix(response.text))
         except ValueError as err:
             raise CloudError(
-                t("账号接口响应不是合法 JSON：{v0}", v0=response.text[:200])
+                f"The account API response is not valid JSON: {response.text[:200]}"
             ) from err
         if not isinstance(obj, dict):
-            raise CloudError(t("账号接口响应结构异常"))
+            raise CloudError("The account API returned an unexpected structure")
         return obj
 
     def start(self, *, skip_confirm: bool = True) -> QrChallenge:
-        """走完 authorize → serviceLogin → longPolling，拿到二维码和长轮询地址。"""
+        """Go through authorize → serviceLogin → longPolling and get the QR code and the long-polling address."""
         authorize = build_auth_url(
             redirect_url=self.redirect_url,
             device_id=self.device_id,
@@ -204,20 +220,20 @@ class QrLoginClient:
         login_page = self._get(authorize).headers.get("location")
         if not login_page:
             raise CloudError(
-                t("授权页没有跳转到登录页"),
-                hint=t("小米可能调整了登录流程，改用 `mi auth login`（浏览器/粘贴）"),
+                "The authorization page did not redirect to the login page",
+                hint="Xiaomi may have changed the login flow; use `mi auth login` "
+                     "(browser / paste) instead",
             )
 
         sep = "&" if "?" in login_page else "?"
         service = self._json(self._get(login_page + sep + "_json=true"))
-        # 未登录时 code=70016，正常；这一步要的是里面的登录参数，不是登录结果。
+        # code=70016 when not logged in is normal; what this step wants are the login
+        # parameters inside, not a login result.
         code = service.get("code")
         if code not in (None, 0, _NOT_LOGGED_IN):
             raise CloudError(
-                t(
-                    "获取登录参数失败：{v0}",
-                    v0=service.get('description') or service.get('desc') or code,
-                ),
+                "Failed to get the login parameters: "
+                f"{service.get('description') or service.get('desc') or code}",
                 code=code,
             )
         missing = [
@@ -227,8 +243,9 @@ class QrLoginClient:
         ]
         if missing:
             raise CloudError(
-                t("登录页响应缺少字段：{v0}", v0=', '.join(missing)),
-                hint=t("小米可能调整了登录流程，改用 `mi auth login`"),
+                f"The login page response is missing fields: {', '.join(missing)}",
+                hint="Xiaomi may have changed the login flow; use `mi auth login` "
+                     "instead",
             )
 
         lp_params = {
@@ -252,10 +269,8 @@ class QrLoginClient:
         )
         if obj.get("code") != 0 or not obj.get("loginUrl") or not obj.get("lp"):
             raise CloudError(
-                t(
-                    "获取二维码失败：{v0}",
-                    v0=obj.get('description') or obj.get('desc') or obj.get('code'),
-                ),
+                "Failed to get the QR code: "
+                f"{obj.get('description') or obj.get('desc') or obj.get('code')}",
                 code=obj.get("code"),
             )
         return QrChallenge(
@@ -272,27 +287,28 @@ class QrLoginClient:
         deadline: float,
         poll_interval: float = 1.0,
     ) -> str:
-        """长轮询等手机确认，返回确认后的 `location`。超时抛错。
+        """Long-poll for the phone's confirmation and return the `location` given after it. Raises on timeout.
 
-        `lp` 会一直挂起直到确认或服务端超时；挂到我们设的单次上限就重发，直到
-        `deadline`。手机已扫但还没点确认时，服务端可能先返回一个没有 `location`
-        的中间响应，这时接着等。
+        `lp` hangs until confirmation or a server-side timeout; when it has hung for our
+        per-request limit it is re-sent, until `deadline`. When the phone has scanned but
+        not yet confirmed, the server may first return an intermediate response without
+        `location`; keep waiting then.
         """
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise MiCliError(
-                    t("扫码登录超时（二维码已失效）"),
-                    hint=t("重新执行 `mi auth login --scan`"),
+                    "QR login timed out (the QR code has expired)",
+                    hint="Run `mi auth login --scan` again",
                 )
             try:
                 response = self._client.get(
                     challenge.lp_url, timeout=min(remaining, _LP_POLL_TIMEOUT)
                 )
             except httpx.ReadTimeout:
-                continue  # 单次挂到点，重发
+                continue  # a single request ran out, re-send
             except httpx.HTTPError as err:
-                raise NetworkError(t("长轮询失败：{err}", err=err)) from err
+                raise NetworkError(f"Long polling failed: {err}") from err
 
             obj = self._json(response)
             code = obj.get("code")
@@ -300,31 +316,35 @@ class QrLoginClient:
             if code == 0 and location:
                 return location
             if code in (0, None, _NOT_LOGGED_IN):
-                # 已扫未确认之类的中间态，喘口气接着等（避免立即返回时空转）。
+                # An intermediate state such as "scanned but not confirmed"; take a
+                # breath and keep waiting (avoids spinning when it returns immediately).
                 if poll_interval:
                     time.sleep(poll_interval)
                 continue
             raise CloudError(
-                t("扫码登录失败：{v0}", v0=obj.get('description') or obj.get('desc') or code),
+                f"QR login failed: {obj.get('description') or obj.get('desc') or code}",
                 code=code,
             )
 
     def resolve_code(self, location: str) -> CallbackResult:
-        """跟随确认后的跳转链，走到 `redirect_uri` 时取出 `code` / `state`。"""
+        """Follow the redirect chain after confirmation and take `code` / `state` on reaching `redirect_uri`."""
         url = location
         for _ in range(_MAX_REDIRECTS):
             host = urlparse(url).hostname
             if host == const.REDIRECT_HOST:
-                # 这台机器多半不可达，不真正请求，直接从 URL 解析 code/state。
-                # 复用粘贴那条路的解析（含 state 校验）。
+                # This machine is most likely unreachable; do not actually request it, parse
+                # code/state straight from the URL. Reuses the parsing of the paste path
+                # (including the state check).
                 return parse_pasted(url, expected_state=self.state)
             response = self._get(url)
             nxt = response.headers.get("location")
             if not nxt:
                 raise CloudError(
-                    t("跳转链没有回到回调地址就停了，可能需要在手机上完成授权确认"),
+                    "The redirect chain stopped before reaching the callback URL; you "
+                    "may need to confirm the authorization on your phone",
                     code=response.status_code,
-                    hint=t("在手机上点「同意/授权」后重试，或改用 `mi auth login`"),
+                    hint="Tap \"Agree / Authorize\" on your phone and retry, or use "
+                         "`mi auth login` instead",
                 )
             url = urljoin(url, nxt)
-        raise CloudError(t("跳转次数过多，未能取到授权码"))
+        raise CloudError("Too many redirects; could not obtain an authorization code")

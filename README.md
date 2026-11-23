@@ -1,7 +1,5 @@
 # mi_home_cli
 
-**English** · [简体中文](README.zh.md)
-
 [![PyPI](https://img.shields.io/pypi/v/mi-home-cli?color=blue)](https://pypi.org/project/mi-home-cli/)
 [![Downloads](https://static.pepy.tech/badge/mi-home-cli/month)](https://pepy.tech/project/mi-home-cli)
 [![Python](https://img.shields.io/pypi/pyversions/mi-home-cli)](https://pypi.org/project/mi-home-cli/)
@@ -98,7 +96,7 @@ mi fan purifier --speed 2
 ### About login
 
 Xiaomi's OAuth service only accepts a callback host of `homeassistant.local:8123`
-(see the empirical findings in [design.en.md §3.2](docs/design.en.md#32-login-flow-the-hard-part-of-the-cli-version)), so `mi auth login`
+(see the empirical findings in [design.md §3.2](docs/design.md#32-login-flow-the-hard-part-of-the-cli-version)), so `mi auth login`
 will:
 
 1. listen on local port 8123;
@@ -212,7 +210,7 @@ call, and the default shouldn't pay that wait.
 
 ## Command overview
 
-Full arguments in [docs/cli-spec.en.md](docs/cli-spec.en.md).
+Full arguments in [docs/cli-spec.md](docs/cli-spec.md).
 
 ### Account
 
@@ -330,16 +328,10 @@ Global options go before the subcommand (`-o` may also follow the subcommand):
 Environment variables `MI_PROFILE` / `MI_REGION` / `MI_OUTPUT` / `MI_CHANNEL` /
 `MI_SCAN_DEVICE_NAME` are also supported.
 
-The interface language (Chinese / English) is picked in this order: the `MI_LANG`
-environment variable (`zh` / `en`) → `mi config set lang en` → the system locale
-(`LC_ALL` > `LC_MESSAGES` > `LANG`; `zh*` means Chinese, anything else English).
-Device spec text (property, action and event descriptions, enum value names such as
-`Day` / `Night`) follows the language too, taken from the translations miot-spec.org
-publishes and falling back to the spec's own English description; the spec cache holds
-every language, so switching needs no refetch. Enum values are written in the language
-you see: `--mode day` in English, `--mode 日光` in Chinese. Column names that are Chinese
-in `-o json/yaml` output follow the language as well (`检查项` becomes `Check` in
-English), so pin `MI_LANG` in scripts that need stable keys.
+The CLI is English only. Device spec text (property, action and event descriptions,
+enum value names such as `Day` / `Night`) uses the English translations published on
+miot-spec.org, falling back to the spec's own description, so enum values are written
+the way `mi spec show` lists them (`--mode day`).
 
 ```bash
 mi -o plain get lamp brightness        # prints just "60", drop it straight into $(...)
@@ -347,7 +339,7 @@ mi -o json device list | jq '.[] | select(.online)'
 ```
 
 JSON / YAML output uses English field names and raw types (`"online": true`, not
-`"online": "yes"`); the Chinese table headers only appear in the human-facing tier.
+`"online": "yes"`); the table headers only appear in the human-facing tier.
 
 ## For AI agents
 
@@ -473,7 +465,7 @@ After editing `pyproject.toml`, run `uv lock` to update the lockfile.
 | LAN direct control (miIO) | ✅ |
 | Mi Home scenes / automations | ❌ needs the account-password identity; this project is OAuth2-only |
 | Camera alarm / recording playback | ❌ same as above |
-| Camera live stream URL | ⚠️ some models, see [docs/camera-stream.en.md](docs/camera-stream.en.md) |
+| Camera live stream URL | ⚠️ some models, see [docs/camera-stream.md](docs/camera-stream.md) |
 | Central gateway local control | ❌ needs certificates, cn region only, high complexity |
 
 **OAuth2-only** is a deliberate boundary: authorization happens in the browser, the CLI
@@ -483,8 +475,8 @@ identity. If you need those,
 [al-one/hass-xiaomi-miot](https://github.com/al-one/hass-xiaomi-miot) (Apache-2.0) covers
 more ground.
 
-Design and protocol details are in [docs/design.en.md](docs/design.en.md), and the full command
-reference is in [docs/cli-spec.en.md](docs/cli-spec.en.md).
+Design and protocol details are in [docs/design.md](docs/design.md), and the full command
+reference is in [docs/cli-spec.md](docs/cli-spec.md).
 
 ## License
 

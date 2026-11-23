@@ -1,6 +1,7 @@
-"""设备清单缓存，以及「一句人话 → 具体设备」的解析。
+"""The device list cache, and resolving "a plain phrase → a specific device".
 
-CLI 好不好用几乎全看这里：用户不该记 did。
+Whether the CLI is pleasant to use depends almost entirely on this: users should
+not have to remember dids.
 """
 from __future__ import annotations
 
@@ -8,7 +9,6 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..i18n import t
 from ..errors import AmbiguousReference, DeviceNotFound
 from ..store import Profile
 
@@ -45,45 +45,46 @@ class Device:
 
     def summary(self, *, wide: bool = False) -> dict[str, Any]:
         row: dict[str, Any] = {
-            "名称": self.label,
-            "家庭": self.home_name or "-",
-            "房间": self.room_name or "-",
-            "型号": self.model,
-            "在线": t("是") if self.online else t("否"),
+            "Name": self.label,
+            "Home": self.home_name or "-",
+            "Room": self.room_name or "-",
+            "Model": self.model,
+            "Online": "yes" if self.online else "no",
         }
         if wide:
             row.update(
                 {
                     "did": self.did,
                     "IP": self.local_ip or "-",
-                    "固件": self.fw_version or "-",
+                    "Firmware": self.fw_version or "-",
                 }
             )
         return row
 
     def detail(self) -> dict[str, Any]:
         data = {
-            "名称": self.name,
-            "别名": self.alias or "-",
+            "Name": self.name,
+            "Alias": self.alias or "-",
             "did": self.did,
-            "型号": self.model,
+            "Model": self.model,
             "urn": self.urn,
-            "厂商": self.manufacturer,
-            "家庭": self.home_name or "-",
-            "房间": self.room_name or "-",
-            "在线": t("是") if self.online else t("否"),
-            "局域网 IP": self.local_ip or "-",
-            "固件版本": self.fw_version or "-",
+            "Manufacturer": self.manufacturer,
+            "Home": self.home_name or "-",
+            "Room": self.room_name or "-",
+            "Online": "yes" if self.online else "no",
+            "LAN IP": self.local_ip or "-",
+            "Firmware version": self.fw_version or "-",
         }
         if self.sub_devices:
-            data["子设备"] = ", ".join(self.sub_devices)
+            data["Sub-device"] = ", ".join(self.sub_devices)
         return data
 
     def to_json(self) -> dict[str, Any]:
-        """给脚本和 agent 用的结构。
+        """The structure for scripts and agents.
 
-        表格里的中文表头是给人看的，拿来当 JSON 的键很难用——字段名保持英文
-        且稳定，值也用原始类型（布尔就是布尔，不是「是」「否」）。
+        The table headers are for people and awkward as JSON keys — the field names here
+        are stable identifiers, and values keep their raw types (a boolean is a boolean,
+        not "yes" / "no").
         """
         data: dict[str, Any] = {
             "did": self.did,
@@ -119,8 +120,9 @@ class Device:
             room_name=data.get("room_name", "") or "",
             token=data.get("token"),
             local_ip=data.get("local_ip"),
-            # 不能写成 `x or -1`：WiFi 直连设备的 connect_type 就是 0，
-            # 会被 or 当成假值吞掉，进而误判成不能局域网直连
+            # This cannot be written as `x or -1`: the connect_type of a WiFi device
+            # connected directly is 0, which `or` would swallow as falsy, wrongly
+            # concluding that direct LAN control is impossible
             connect_type=(
                 int(data["connect_type"])
                 if data.get("connect_type") is not None
@@ -135,7 +137,7 @@ class Device:
 
 
 class Registry:
-    """一个 profile 的设备清单快照。"""
+    """A snapshot of one profile's device list."""
 
     def __init__(
         self,
@@ -158,7 +160,7 @@ class Registry:
 
     @staticmethod
     def read(profile: Profile) -> "Registry | None":
-        from ..store import _read_json  # 内部工具，权限处理都在那边
+        from ..store import _read_json  # internal helper, permissions are all handled over there
 
         data = _read_json(profile.devices_path)
         if not data:
@@ -171,7 +173,7 @@ class Registry:
         profile.write_devices(payload)
         return Registry(payload, profile.read_aliases())
 
-    # ---------- 过滤 ----------
+    # ---------- filtering ----------
 
     def filter(
         self,
@@ -202,10 +204,10 @@ class Registry:
 
         return [device for device in self.devices if match(device)]
 
-    # ---------- 解析 ----------
+    # ---------- resolution ----------
 
     def find_home(self, ref: str) -> dict[str, Any]:
-        """按名称或 home_id 找一个家庭。"""
+        """Find a home by name or home_id."""
         lowered = ref.strip().lower()
         stages = [
             [h for h in self.homes if str(h["home_id"]) == ref.strip()],
@@ -217,23 +219,24 @@ class Registry:
                 return candidates[0]
             if len(candidates) > 1:
                 raise AmbiguousReference(
-                    t("`{ref}` 匹配到多个家庭：", ref=ref)
-                    + t("、").join(h["home_name"] for h in candidates)
+                    f"`{ref}` matches several homes: "
+                    + ", ".join(h["home_name"] for h in candidates)
                 )
         raise DeviceNotFound(
-            t("没有找到家庭 `{ref}`", ref=ref),
-            hint=t("用 `mi home list` 看看有哪些家庭"),
+            f"Home `{ref}` not found",
+            hint="See the available homes with `mi home list`",
         )
 
     def resolve(self, ref: str, **filters: Any) -> Device:
-        """把用户写的东西变成一台具体设备。
+        """Turn what the user wrote into one specific device.
 
-        按精确度从高到低匹配，某一级命中就不再往下找；同一级命中多个则报歧义，
-        并把候选列出来让用户挑。
+        Matching goes from most to least precise; once a level hits, lower levels are not
+        searched. Several hits on the same level are reported as ambiguous, with the
+        candidates listed for the user to pick from.
         """
         pool = self.filter(**filters)
         if not pool:
-            raise DeviceNotFound(t("当前过滤条件下没有任何设备"))
+            raise DeviceNotFound("No devices match the current filters")
         needle = ref.strip()
         lowered = needle.lower()
 
@@ -255,25 +258,17 @@ class Registry:
                 return candidates[0]
             if len(candidates) > 1:
                 raise AmbiguousReference(
-                    t(
-                        "`{ref}` 匹配到 {n_candidates} 台设备：\n",
-                        ref=ref,
-                        n_candidates=len(candidates),
-                    )
+                    f"`{ref}` matches {len(candidates)} devices:\n"
                     + "\n".join(
-                        t(
-                            "  {location} / {label}（{model}，did {did}）",
-                            location=d.location,
-                            label=d.label,
-                            model=d.model,
-                            did=d.did,
-                        )
+                        f"  {d.location} / {d.label} ({d.model}, did {d.did})"
                         for d in candidates[:10]
                     )
                     + ("\n  …" if len(candidates) > 10 else ""),
-                    hint=t("用完整名称、别名或 did，也可以加 --home / --room 缩小范围"),
+                    hint="Use the full name, an alias or the did, or narrow it down "
+                         "with --home / --room",
                 )
         raise DeviceNotFound(
-            t("没有找到设备 `{ref}`", ref=ref),
-            hint=t("用 `mi device list` 看看有哪些设备，或 `mi device sync` 刷新缓存"),
+            f"Device `{ref}` not found",
+            hint="See the available devices with `mi device list`, or refresh the "
+                 "cache with `mi device sync`",
         )

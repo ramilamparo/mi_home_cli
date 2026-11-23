@@ -1,3 +1,3 @@
-"""米家控制 CLI。"""
+"""Mi Home control CLI."""
 
 __version__ = "0.1.3"

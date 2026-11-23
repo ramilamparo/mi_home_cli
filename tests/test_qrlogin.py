@@ -1,4 +1,4 @@
-"""扫码登录的离线测试：整条 HTTP 链路用 httpx.MockTransport 回放。"""
+"""Offline tests of QR-code login: the whole HTTP chain is replayed with httpx.MockTransport."""
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -13,10 +13,11 @@ REDIRECT = const.redirect_url("1234567890")
 DEVICE_ID = "ha.abcdef0123456789abcdef0123456789"
 STATE = state_for_device(DEVICE_ID)
 
-# serviceLogin?_json=true 的最小可用响应（真实响应字段更多）。
+# The minimal usable response of serviceLogin?_json=true (real responses have more
+# fields).
 SERVICE_LOGIN = {
-    "code": 70016,  # 未登录，正常
-    "description": "登录验证失败",
+    "code": 70016,  # not logged in, normal
+    "description": "login verification failed",
     "_sign": "2&V1_oauth2.0&SIGN=",
     "sid": "oauth2.0",
     "qs": "%3Fcallback%3Dxxx",
@@ -33,14 +34,15 @@ LONG_POLLING = {
     "qr": "https://account.xiaomi.com/pass/qr/login?ticket=lp_abc",
     "timeout": 300,
 }
-# 确认后跳转链：sts → authorize → redirect_uri?code=...
+# Redirect chain after confirmation: sts → authorize → redirect_uri?code=...
 STS_LOCATION = "https://account.xiaomi.com/sts?ticket=abc&followup=z"
 AUTHORIZE_BACK = "https://account.xiaomi.com/oauth2/authorize?resume=1"
 FINAL_REDIRECT = f"{REDIRECT}?code=THE-CODE&state={STATE}"
 
 
 def _client(handler) -> httpx.Client:
-    # 复刻真实用法：不自动跟随跳转，我们自己解析每一跳。
+    # Mirror real usage: redirects are not followed automatically, we parse each hop
+    # ourselves.
     return httpx.Client(
         transport=httpx.MockTransport(handler), follow_redirects=False
     )
@@ -56,7 +58,7 @@ def _qr(handler) -> QrLoginClient:
 
 
 def test_start_reuses_persistent_web_device_id():
-    """预置的 web deviceId 会作为 cookie 带上，让小米认成同一台设备。"""
+    """The preset web deviceId is sent as a cookie, so Xiaomi treats it as the same device."""
     seen_cookies = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -81,18 +83,19 @@ def test_start_reuses_persistent_web_device_id():
     )
     with client:
         client.start()
-    # serviceLogin / longPolling 这几跳都带上了固定的 deviceId
+    # the serviceLogin / longPolling hops all carried the fixed deviceId
     assert any("deviceId=wb_fixed-device-123" in c for c in seen_cookies)
 
 
 def test_default_user_agent_identifies_tool_not_browser():
-    # 默认设备名是工具名而不是浏览器（免得小米账号里冒出一堆 Chrome）
+    # the default device name is the tool name, not a browser (so the Xiaomi account
+    # does not fill up with Chrome entries)
     assert const.WEB_USER_AGENT.startswith("mi-home-cli/")
     assert "Chrome" not in const.WEB_USER_AGENT
 
 
 def test_custom_user_agent_is_sent():
-    """自定义 user_agent 会作为 UA 头发出，决定小米显示的设备名。"""
+    """A custom user_agent is sent as the UA header and decides the device name Xiaomi shows."""
     seen_ua = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -107,7 +110,8 @@ def test_custom_user_agent_is_sent():
             return httpx.Response(200, json=LONG_POLLING)
         raise AssertionError(request.url.path)
 
-    # 注入 client 时 UA 由测试自己设定，验证「按 UA 头发送」这条链路
+    # with an injected client the test sets the UA itself; this verifies the "sent as
+    # the UA header" path
     client = QrLoginClient(
         redirect_url=REDIRECT,
         device_id=DEVICE_ID,
@@ -134,12 +138,12 @@ def test_start_builds_challenge():
             assert request.url.params.get("_json") == "true"
             return httpx.Response(200, json=SERVICE_LOGIN)
         if path == "/longPolling/loginUrl":
-            # serviceLogin 拿到的登录参数要原样带上
+            # the login parameters from serviceLogin must be passed on unchanged
             assert request.url.params["_sign"] == SERVICE_LOGIN["_sign"]
             assert request.url.params["sid"] == "oauth2.0"
             assert request.url.params["callback"] == SERVICE_LOGIN["callback"]
             return httpx.Response(200, json=LONG_POLLING)
-        raise AssertionError(f"未预期的请求：{path}")
+        raise AssertionError(f"unexpected request: {path}")
 
     with _qr(handler) as client:
         challenge = client.start()
@@ -156,7 +160,7 @@ def test_start_strips_json_prefix():
         if path == "/oauth2/authorize":
             return httpx.Response(302, headers={"location": "https://account.xiaomi.com/pass/serviceLogin"})
         if path == "/pass/serviceLogin":
-            # passport 常在 JSON 前塞一段防劫持前缀
+            # passport often puts an anti-hijacking prefix before the JSON
             body = const.XIAOMI_JSON_PREFIX + _json.dumps(SERVICE_LOGIN)
             return httpx.Response(200, text=body)
         if path == "/longPolling/loginUrl":
@@ -175,7 +179,7 @@ def test_start_missing_login_redirect():
     with _qr(handler) as client:
         with pytest.raises(CloudError) as excinfo:
             client.start()
-    assert "登录页" in str(excinfo.value)
+    assert "login page" in str(excinfo.value)
 
 
 def test_start_missing_sign_field():
@@ -215,7 +219,7 @@ def test_poll_waits_through_intermediate_state():
     def handler(request: httpx.Request) -> httpx.Response:
         calls["n"] += 1
         if calls["n"] == 1:
-            # 已扫未确认：code=0 但还没有 location
+            # scanned but not confirmed: code=0 but no location yet
             return httpx.Response(200, json={"code": 0, "result": "ok"})
         return httpx.Response(200, json={"code": 0, "location": STS_LOCATION})
 
@@ -227,24 +231,24 @@ def test_poll_waits_through_intermediate_state():
 
 def test_poll_reports_error_code():
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"code": 70003, "desc": "二维码已失效"})
+        return httpx.Response(200, json={"code": 70003, "desc": "QR code expired"})
 
     with _qr(handler) as client:
         with pytest.raises(CloudError) as excinfo:
             client.poll(_challenge(), deadline=_deadline(), poll_interval=0)
-    assert "二维码已失效" in str(excinfo.value)
+    assert "QR code expired" in str(excinfo.value)
 
 
 def test_poll_timeout():
     def handler(request: httpx.Request) -> httpx.Response:
-        # 一直是中间态，等到 deadline
+        # stays in the intermediate state until the deadline
         return httpx.Response(200, json={"code": 0})
 
     with _qr(handler) as client:
         with pytest.raises(MiCliError) as excinfo:
-            # deadline 已过，poll 一进去就超时
+            # the deadline has already passed, so poll times out as soon as it starts
             client.poll(_challenge(), deadline=0.0, poll_interval=0)
-    assert "超时" in str(excinfo.value)
+    assert "timed out" in str(excinfo.value)
 
 
 def test_resolve_code_follows_chain_to_redirect():
@@ -253,7 +257,7 @@ def test_resolve_code_follows_chain_to_redirect():
             return httpx.Response(302, headers={"location": AUTHORIZE_BACK})
         if request.url.path == "/oauth2/authorize":
             return httpx.Response(302, headers={"location": FINAL_REDIRECT})
-        raise AssertionError(f"不该请求 {request.url}")
+        raise AssertionError(f"must not request {request.url}")
 
     with _qr(handler) as client:
         result = client.resolve_code(STS_LOCATION)
@@ -268,11 +272,11 @@ def test_resolve_code_does_not_request_redirect_host():
         seen.append(request.url.host)
         if request.url.path == "/sts":
             return httpx.Response(302, headers={"location": FINAL_REDIRECT})
-        raise AssertionError(f"不该请求 {request.url}")
+        raise AssertionError(f"must not request {request.url}")
 
     with _qr(handler) as client:
         client.resolve_code(STS_LOCATION)
-    # homeassistant.local 那一跳只解析、不真正请求
+    # the homeassistant.local hop is only parsed, not actually requested
     assert const.REDIRECT_HOST not in seen
 
 
@@ -292,13 +296,14 @@ def test_resolve_code_rejects_state_mismatch():
 
 def test_resolve_code_dead_ends_without_code():
     def handler(request: httpx.Request) -> httpx.Response:
-        # 停在一个没有再跳转的页面（比如需要手机确认的授权页）
+        # stops at a page that does not redirect any further (e.g. a consent page that
+        # needs confirming on the phone)
         return httpx.Response(200, text="<html>consent</html>")
 
     with _qr(handler) as client:
         with pytest.raises(CloudError) as excinfo:
             client.resolve_code(STS_LOCATION)
-    assert "手机" in str(excinfo.value)
+    assert "phone" in str(excinfo.value)
 
 
 def test_network_error_wrapped():
@@ -312,19 +317,22 @@ def test_network_error_wrapped():
 
 def test_render_qr_returns_scannable_block():
     out = render_qr("https://example.com/scan")
-    # segno 在依赖里，应当能画出来
+    # segno is a dependency, so drawing should work
     assert out is not None
-    # 上半块 ▀，前景=上模块 / 背景=下模块，黑白显式着色（不反色）
+    # upper half block ▀, foreground = upper module / background = lower module,
+    # explicit black and white (no inversion)
     assert "▀" in out
-    # 暗模块用黑（30/40），亮模块用白（37/47），四种组合都可能出现
+    # dark modules use black (30/40), light modules white (37/47); all four combinations
+    # can occur
     assert "\x1b[30;40m" in out or "\x1b[30;47m" in out
     assert "\x1b[37;47m" in out or "\x1b[37;40m" in out
-    # 半块把高度折半：每行的可见模块列数 ≈ 行数 * 2（二维码是方阵）
+    # half blocks halve the height: visible module columns per line ≈ lines * 2 (a QR
+    # code is a square matrix)
     import re
 
     lines = out.splitlines()
     cols = {len(re.sub(r"\x1b\[[0-9;]*m", "", ln)) for ln in lines}
-    assert len(cols) == 1  # 每行等宽
+    assert len(cols) == 1  # every line has the same width
     width = cols.pop()
     assert abs(width - len(lines) * 2) <= 2
 
@@ -332,7 +340,8 @@ def test_render_qr_returns_scannable_block():
 def test_render_qr_returns_none_when_too_wide(monkeypatch):
     import os
 
-    # 终端只有 10 列，二维码宽度必然超出 → 宁可不画（否则换行折断扫不出）
+    # the terminal has only 10 columns, so the QR code is bound to be too wide → better
+    # not to draw (it would wrap, break and not scan)
     monkeypatch.setattr(
         "shutil.get_terminal_size", lambda fallback=(80, 24): os.terminal_size((10, 24))
     )
